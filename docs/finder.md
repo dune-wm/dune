@@ -38,7 +38,7 @@ goes back; `Mod+Tab` / `Mod+Shift+Tab` cycle through every mode.
 | **browser tabs** | in windows | a Chromium browser started with `--remote-debugging-port=9222` lists its tabs; Enter brings the tab forward in its window. |
 | **files** | `#` in apps | browse from home: Enter goes into a folder or opens a file (`xdg-open`); `~`, `/` and `name/` work as in a shell; `Mod+Enter` opens `file_manager` (yazi, set in `finder.toml`), `Ctrl+Enter` a terminal there. |
 | **jumps** | `>` in apps | folders by frecency, like zoxide's `z` (parent folders in home included). Enter opens a terminal there, `Mod+Enter` the file manager, `/` goes into the folder in files mode. |
-| **tile options** | `Mod+/` | private, float, center, full width, to tab, send to desktop #, send to dock, close, each with its key. |
+| **tile options** | `Mod+/` | private, mute (the streams of the tile's app, `✓` while muted; a browser's windows share them, so they go silent together; a Steam game's are found by its `SteamAppId`), float, center, full width, to tab, send to desktop #, send to dock, close, each with its key. |
 | **system** | `@` in apps, or `Mod+Tab` from the last mode | power off, reboot, log out; **Stay awake** holds off idle (no lock, screen off nor suspend from swayidle) until chosen again, its row says `on` meanwhile. |
 | **empty container** | `Mod+Return` | Enter right away puts a terminal there; anything chosen or typed goes there instead (`/` then a window moves it in). |
 

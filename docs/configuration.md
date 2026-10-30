@@ -106,6 +106,7 @@ Environment variables win over the file: `XKB_DEFAULT_*`, `DUNE_TERMINAL`, `DUNE
 | `tile_options` | `Mod+/` | dune-finder: tile options |
 | `switcher` | none | dune-finder: windows |
 | `private_tile` | none | private tile |
+| `mute_tile` | none | mute the focused tile's app (again: unmute) |
 | `dock` | `Mod+Shift+d` | the tile (with its tabs) into the dock |
 | `terminal_vertical` / `terminal_horizontal` | `Mod+v` / `Mod+s` | terminal right / below |
 | `terminal_tab` | none | terminal as a tab |

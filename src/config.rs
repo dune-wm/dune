@@ -104,6 +104,7 @@
 //! tile_options = "mod+slash"          # dune-finder on the focused tile's options (private, float, ...)
 //! switcher = "none"                   # dune-finder on the windows (`/` in it gets there too)
 //! private_tile = "none"               # block the focused tile on screen and in captures (again: show it)
+//! mute_tile = "none"                  # mute the sound of the focused tile's app (again: unmute it)
 //! dock = "mod+shift+d"                # the focused tile (with its tabs) into the dock of its desktop
 //! dock_show = "mod+shift+e"           # the dock of the active monitor: arrows or k/j, Enter out, p pins, Esc
 //! terminal_vertical = "mod+v"         # a terminal right of the tile, in its folder
@@ -323,6 +324,7 @@ pub enum Binding {
     TileOptions,
     Switcher,
     PrivateTile,
+    MuteTile,
     Dock,
     DockShow,
     Terminal(TerminalHere),
@@ -383,6 +385,7 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("tile_options", TileOptions, "mod+slash"),
         ("switcher", Switcher, "none"),
         ("private_tile", PrivateTile, "none"),
+        ("mute_tile", MuteTile, "none"),
         ("dock", Dock, "mod+shift+d"),
         ("dock_show", DockShow, "mod+shift+e"),
         ("terminal_vertical", Terminal(TerminalHere::Right), "mod+v"),
@@ -885,7 +888,7 @@ mod tests {
         // private switches (in the tile options), a terminal tab (Mod+Shift+t opens
         // an empty one) and the monitors (their keys depend on how they are placed).
         let c = config("");
-        let unbound = [Binding::Switcher, Binding::PrivateTile, Binding::Terminal(TerminalHere::Tab), Binding::Quit];
+        let unbound = [Binding::Switcher, Binding::PrivateTile, Binding::MuteTile, Binding::Terminal(TerminalHere::Tab), Binding::Quit];
         for (name, binding, defaults) in binding_table() {
             let none = unbound.contains(&binding) || matches!(binding, Binding::FocusMonitor(_));
             assert_eq!(keys_of(&c, binding).is_empty(), none, "{name}");

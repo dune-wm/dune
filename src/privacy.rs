@@ -96,6 +96,7 @@ pub fn workspace_name(n: u8, locked: bool) -> String {
 pub fn binding_of(action: TileAction) -> Binding {
     match action {
         TileAction::PrivateTile => Binding::PrivateTile,
+        TileAction::Mute => Binding::MuteTile,
         TileAction::Float => Binding::Float,
         TileAction::Center => Binding::Center,
         TileAction::FullWidth => Binding::FullWidth,
@@ -108,13 +109,17 @@ pub fn binding_of(action: TileAction) -> Binding {
 }
 
 /// The rows of the tile options menu: every action for a tile (`tile`: whether it is
-/// private), none without one. `keys` gives each one's keys.
-pub fn option_rows(tile: Option<bool>, keys: impl Fn(TileAction) -> String) -> Vec<TileOption> {
-    let Some(private) = tile else { return Vec::new() };
+/// private, and muted), none without one. `keys` gives each one's keys.
+pub fn option_rows(tile: Option<(bool, bool)>, keys: impl Fn(TileAction) -> String) -> Vec<TileOption> {
+    let Some((private, muted)) = tile else { return Vec::new() };
     TileAction::all()
         .into_iter()
         .map(|action| {
-            let on = (action == TileAction::PrivateTile).then_some(private);
+            let on = match action {
+                TileAction::PrivateTile => Some(private),
+                TileAction::Mute => Some(muted),
+                _ => None,
+            };
             TileOption { action, on, keys: keys(action) }
         })
         .collect()
@@ -197,8 +202,8 @@ impl Dune {
     /// with their keys.
     pub fn tile_options(&self, tile: Option<TileId>) -> Vec<TileOption> {
         let tile = tile.filter(|t| self.tiles.contains_key(t) && !self.on_locked_desk(*t));
-        let private = tile.map(|t| self.privacy.tile(t));
-        option_rows(private, |action| self.config.key_label(binding_of(action)))
+        let state = tile.map(|t| (self.privacy.tile(t), self.tile_muted(t)));
+        option_rows(state, |action| self.config.key_label(binding_of(action)))
     }
 }
 
@@ -239,14 +244,17 @@ mod tests {
     #[test]
     fn the_menu_has_every_action_for_a_tile_and_none_without() {
         let keys = |a: TileAction| if a == TileAction::Float { "super+shift+space".to_string() } else { String::new() };
-        let rows = option_rows(Some(true), keys);
+        let rows = option_rows(Some((true, false)), keys);
         assert_eq!(rows.len(), TileAction::all().len());
         assert_eq!(rows[0], TileOption { action: TileAction::PrivateTile, on: Some(true), keys: String::new() });
         assert_eq!(rows.iter().find(|r| r.action == TileAction::Float).map(|r| (r.on, r.keys.as_str())), Some((None, "super+shift+space")));
-        assert!(rows[1..].iter().all(|r| r.on.is_none()));
-        assert_eq!(option_rows(Some(false), keys)[0].on, Some(false));
+        assert!(rows[2..].iter().all(|r| r.on.is_none()));
+        assert_eq!(option_rows(Some((false, true)), keys)[0].on, Some(false));
+        assert_eq!(rows.iter().find(|r| r.action == TileAction::Mute).map(|r| r.on), Some(Some(false)));
+        assert_eq!(option_rows(Some((false, true)), keys)[1], TileOption { action: TileAction::Mute, on: Some(true), keys: String::new() });
         assert_eq!(option_rows(None, keys), []);
         assert_eq!(binding_of(TileAction::ToTab), Binding::StackToTabs);
+        assert_eq!(binding_of(TileAction::Mute), Binding::MuteTile);
     }
 
     #[test]

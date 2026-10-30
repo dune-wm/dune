@@ -109,6 +109,7 @@ pub struct Dune {
     /// in their process, or sharing it (they play if their title says so), with the titles
     /// the media players play.
     pub sound_pids: HashSet<u32>,
+    pub sound_streams: Vec<crate::sound::Stream>,
     pub sounding: HashSet<TileId>,
     pub sounding_shared: HashSet<TileId>,
     pub sound_titles: Vec<String>,
@@ -371,6 +372,7 @@ impl Dune {
             shown: Vec::new(),
             tab_bars: Vec::new(),
             sound_pids: HashSet::new(),
+            sound_streams: Vec::new(),
             sounding: HashSet::new(),
             sounding_shared: HashSet::new(),
             sound_titles: Vec::new(),

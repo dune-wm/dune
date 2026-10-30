@@ -65,6 +65,8 @@ enum Action {
     TileOptions,
     /// Block the focused tile on screen and in captures (again: show it).
     PrivateTile,
+    /// Mute the sound of the focused tile's app (again: unmute it).
+    MuteTile,
     /// The focused tile (with its tabs) into the dock of its desktop.
     Dock,
     /// Mod+Shift+e: the dock of the focused tile's monitor, driven by keys (again: hide it).
@@ -128,6 +130,7 @@ impl From<Binding> for Action {
             Binding::Switcher => Action::Switcher,
             Binding::TileOptions => Action::TileOptions,
             Binding::PrivateTile => Action::PrivateTile,
+            Binding::MuteTile => Action::MuteTile,
             Binding::Dock => Action::Dock,
             Binding::DockShow => Action::DockShow,
             Binding::Terminal(here) => Action::Terminal(here),
@@ -545,6 +548,7 @@ impl Dune {
             Action::Switcher => self.toggle_finder(FinderMode::Windows),
             Action::TileOptions => self.toggle_finder(FinderMode::TileOptions),
             Action::PrivateTile => self.toggle_private_focused(),
+            Action::MuteTile => self.toggle_mute_focused(),
             Action::Dock => {
                 if let Some(id) = self.focused {
                     self.send_to_dock(id);
@@ -597,8 +601,10 @@ impl Dune {
     /// work on the focused tile). Nothing without one, or with one on a locked desktop.
     pub fn run_tile_action(&mut self, tile: Option<TileId>, action: TileAction) {
         let Some(tile) = tile.filter(|t| self.tiles.contains_key(t) && !self.on_locked_desk(*t)) else { return };
-        if action == TileAction::PrivateTile {
-            return self.toggle_private_tile(tile);
+        match action {
+            TileAction::PrivateTile => return self.toggle_private_tile(tile),
+            TileAction::Mute => return self.toggle_mute_tile(tile),
+            _ => {}
         }
         if self.focused != Some(tile) {
             self.focus_tile(tile);

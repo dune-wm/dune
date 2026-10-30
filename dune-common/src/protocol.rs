@@ -314,6 +314,8 @@ impl WindowInfo {
 pub enum TileAction {
     /// Block the tile on screen and in captures (again: show it).
     PrivateTile,
+    /// Mute the playback streams of the tile's process (again: unmute them).
+    Mute,
     Float,
     Center,
     FullWidth,
@@ -331,7 +333,7 @@ impl TileAction {
     /// Every action, in the menu's order.
     pub fn all() -> Vec<TileAction> {
         use TileAction::*;
-        let mut all = vec![PrivateTile, Float, Center, FullWidth, ToTab];
+        let mut all = vec![PrivateTile, Mute, Float, Center, FullWidth, ToTab];
         all.extend((1..=9).map(SendToDesk));
         all.extend([Dock, Scratchpad, Close]);
         all
@@ -341,6 +343,7 @@ impl TileAction {
     pub fn code(self) -> String {
         match self {
             TileAction::PrivateTile => "private_tile".into(),
+            TileAction::Mute => "mute_tile".into(),
             TileAction::Float => "float".into(),
             TileAction::Center => "center".into(),
             TileAction::FullWidth => "full_width".into(),
@@ -360,6 +363,7 @@ impl TileAction {
     pub fn label(self) -> String {
         match self {
             TileAction::PrivateTile => "Private tile".into(),
+            TileAction::Mute => "Mute".into(),
             TileAction::Float => "Float".into(),
             TileAction::Center => "Center".into(),
             TileAction::FullWidth => "Full width".into(),
@@ -865,13 +869,14 @@ mod tests {
     #[test]
     fn tile_actions_have_their_config_names() {
         let all = TileAction::all();
-        assert_eq!(all.len(), 17);
+        assert_eq!(all.len(), 18);
         for action in all {
             assert_eq!(TileAction::parse(&action.code()), Some(action));
         }
         assert_eq!(TileAction::ToTab.code(), "stack_to_tabs");
         assert_eq!(TileAction::SendToDesk(3).label(), "Send to desktop 3");
         assert_eq!(TileAction::Scratchpad.code(), "send_to_scratchpad");
+        assert_eq!(TileAction::Mute.code(), "mute_tile");
         assert_eq!(TileAction::parse("bogus"), None);
     }
 
