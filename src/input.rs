@@ -427,14 +427,32 @@ fn activate_constraint(surface: &WlSurface, pointer: &PointerHandle<Dune>, local
         if let Some(constraint) = constraint.filter(|c| !c.is_active())
             && constraint.region().is_none_or(|r| r.contains(local.to_i32_round()))
         {
+            tracing::info!("pointer constraint active");
             constraint.activate();
         }
     });
 }
 
 impl Dune {
+    /// The layout may have moved under a still pointer (a tile mapped, resized, floated, a
+    /// strip slide, a desktop switch): the pointer focus goes to what is under it now, and a
+    /// constraint waiting there starts. Run on every turn of the event loop.
+    pub fn refresh_pointer_focus(&mut self) {
+        let pointer = self.seat.get_pointer().unwrap();
+        let location = pointer.current_location();
+        let under = self.surface_under(location);
+        if under.as_ref().map(|(s, _)| s) != pointer.current_focus().as_ref() {
+            let event = MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() };
+            pointer.motion(self, under.clone(), &event);
+            pointer.frame(self);
+        }
+        if let Some((surface, origin)) = under {
+            activate_constraint(&surface, &pointer, location - origin);
+        }
+    }
+
     /// The closest point to `pos` that is on some output.
-    fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
+    pub fn clamp_to_outputs(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
         let geos: Vec<_> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
         clamp_to(&geos, pos)
     }
@@ -902,6 +920,14 @@ impl Dune {
                     if let Some(target) = self.plus_at(pos.x, pos.y) {
                         return self.open_empty_tab(target);
                     }
+                }
+
+                if button_state == ButtonState::Pressed {
+                    let pos = pointer.current_location();
+                    let under = self.surface_under(pos).map(|(s, o)| (smithay::reexports::wayland_server::Resource::id(&s), pos - o));
+                    let focus = pointer.current_focus().map(|s| smithay::reexports::wayland_server::Resource::id(&s));
+                    let window = self.space.element_under(pos).map(|(w, at)| (at, w.geometry(), w.bbox()));
+                    tracing::info!(?pos, ?under, ?focus, ?window, grabbed = pointer.is_grabbed(), "click");
                 }
 
                 // Click to focus.

@@ -152,26 +152,46 @@ impl DmabufHandler for Dune {
 //
 
 use smithay::input::pointer::PointerHandle;
-use smithay::wayland::pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint};
+use smithay::utils::{Logical, Point};
+use smithay::wayland::pointer_constraints::{ConstraintRemove, PointerConstraintsHandler, with_pointer_constraint};
 
 impl PointerConstraintsHandler for Dune {
-    /// A constraint on the surface under the pointer starts right away; others when the
-    /// pointer gets there (see the pointer motion handling).
+    /// A constraint on the surface under the pointer starts right away (the pointer focus
+    /// brought up to date first); others when the pointer gets there.
     fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
-        let on_it = pointer.current_focus().as_ref() == Some(surface);
         with_pointer_constraint(surface, pointer, |constraint| {
             let kind = constraint.map(|c| match &*c {
                 smithay::wayland::pointer_constraints::PointerConstraint::Locked(_) => "locked",
                 smithay::wayland::pointer_constraints::PointerConstraint::Confined(_) => "confined",
             });
-            tracing::debug!(?kind, on_it, "pointer constraint");
+            tracing::info!(?kind, "pointer constraint");
         });
-        if on_it {
-            with_pointer_constraint(surface, pointer, |constraint| {
-                if let Some(constraint) = constraint {
-                    constraint.activate();
-                }
-            });
+        self.refresh_pointer_focus();
+    }
+
+    /// Kept for when the lock ends: a game (Xwayland's pointer warps too) moves its own cursor
+    /// while the pointer is locked, and it shows up there afterwards.
+    fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
+        let active = with_pointer_constraint(surface, pointer, |c| c.is_some_and(|c| c.is_active()));
+        let Some((under, origin)) = self.surface_under(pointer.current_location()) else { return };
+        if active && under == *surface {
+            self.pointer_hint = Some(self.clamp_to_outputs(origin + location));
+        }
+    }
+
+    /// The game let the pointer go: it goes where the game last put its cursor. Not when the
+    /// pointer left the surface itself.
+    fn remove_constraint(&mut self, _surface: &WlSurface, pointer: &PointerHandle<Self>, reason: ConstraintRemove) {
+        let why = match reason {
+            ConstraintRemove::PointerLeave(_) => "pointer left",
+            ConstraintRemove::Destroyed(_) => "destroyed",
+        };
+        tracing::info!(why, "pointer constraint ended");
+        let Some(target) = self.pointer_hint.take() else { return };
+        if !matches!(reason, ConstraintRemove::PointerLeave(_)) {
+            tracing::info!(from = ?pointer.current_location(), to = ?target, "pointer warped to the hint");
+            pointer.set_location(target);
+            self.pointer_at(target);
         }
     }
 }

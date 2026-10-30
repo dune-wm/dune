@@ -185,7 +185,9 @@ fn run(mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
         autostart(command);
     }
 
-    event_loop.run(None, &mut state, |_| {})?;
+    event_loop.run(None, &mut state, |state| {
+        state.refresh_pointer_focus();
+    })?;
 
     let _ = std::fs::remove_file(&socket);
     if let Some(link) = &state.shell_wrapper {

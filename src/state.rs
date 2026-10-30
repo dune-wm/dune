@@ -236,6 +236,9 @@ pub struct Dune {
     pub recent: Vec<TileId>,
     /// How far the pointer has pushed against a screen edge (see `input::edge_slide`).
     pub edge_push: f64,
+    /// Where a game that locks the pointer wants it when the lock ends (its cursor position
+    /// hint, global).
+    pub pointer_hint: Option<Point<f64, Logical>>,
     /// The pointer image: clients choose it; dune draws it on a real session.
     pub cursor_status: CursorImageStatus,
     pub cursor: crate::cursor::Cursor,
@@ -427,6 +430,7 @@ impl Dune {
             recording_watchers: Vec::new(),
             recent: Vec::new(),
             edge_push: 0.0,
+            pointer_hint: None,
             workspaces,
             gamma,
             config,

@@ -25,7 +25,7 @@ use smithay::{
         },
     },
     desktop::{WindowSurfaceType, utils::under_from_surface_tree},
-    input::pointer::{CursorImageStatus, MotionEvent},
+    input::pointer::CursorImageStatus,
     output::Output,
     reexports::{
         wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
@@ -182,16 +182,6 @@ impl Dune {
         self.seat.get_keyboard().unwrap().unset_grab(self);
         self.update_focus();
         self.refresh_pointer_focus();
-    }
-
-    /// Point the pointer focus at what is under it now (only lock surfaces while locked).
-    fn refresh_pointer_focus(&mut self) {
-        let pointer = self.seat.get_pointer().unwrap();
-        let location = pointer.current_location();
-        let under = self.surface_under(location);
-        let event = MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() };
-        pointer.motion(self, under, &event);
-        pointer.frame(self);
     }
 
     /// While locked, where the keyboard goes: the lock surface of the active output, else
