@@ -10,6 +10,9 @@ Lock, idle, night light, X11, Waybar and the `dune` command line.
 
 - **Lock**: `Mod+Escape` runs `lock_command` (`swaylock -f`), through `ext-session-lock`.
   While locked only the lock surface is shown and compositor keys are off.
+- **Adaptive sync** (VRR): `adaptive_sync` in `[output.NAME]`. `"fullscreen"` turns it on
+  only while a tile is fullscreen on that monitor (games), so the desktop never flickers.
+  A monitor that would need a modeset to switch it is left as it is (logged).
 - **Idle**: `ext-idle-notify` for swayidle's timers; idle-inhibit lets videos and games hold it off, and so does the finder's Stay awake.
 - **Night light**: `wlr-gamma-control` for wlsunset (real session only).
 - **X11 apps**: through `xwayland-satellite`, started when the first X11 client connects

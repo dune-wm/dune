@@ -16,7 +16,7 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType,
+            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType, VrrSupport,
             compositor::FrameFlags,
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
@@ -49,15 +49,15 @@ use smithay_drm_extras::{
 
 use crate::{
     Dune,
-    config::{InputConfig, OutputMode},
+    config::{AdaptiveSync, InputConfig, OutputMode},
     gamma::linear_ramps,
-    render::{BACKGROUND, OutputRenderElements},
+    render::{BACKGROUND, ScaledElements},
     state::Backend,
 };
 
 type Allocator = GbmAllocator<DrmDeviceFd>;
 type Exporter = GbmFramebufferExporter<DrmDeviceFd>;
-type Elements = OutputRenderElements;
+type Elements = ScaledElements;
 
 /// How often outputs are checked for something new to show (frames with no damage
 /// cost nothing).
@@ -129,6 +129,35 @@ struct Surface {
     queued: Option<Instant>,
     /// Gamma ramps a client set (night light), None for linear.
     gamma: Option<Vec<u16>>,
+    /// The monitor cannot change its refresh rate without a modeset: VRR is not tried again.
+    vrr_unsupported: bool,
+}
+
+/// Turn VRR of `surface` on or off for its next frame, when the monitor can without a
+/// modeset (a black flash on every fullscreen change otherwise).
+fn set_vrr(surface: &mut Surface, on: bool) {
+    if surface.vrr_unsupported {
+        return;
+    }
+    let name = surface.output.name();
+    let result = surface.drm_output.with_compositor(|c| {
+        if c.vrr_enabled() == on {
+            return Ok(());
+        }
+        let connectors: Vec<_> = c.current_connectors().into_iter().collect();
+        let supported = connectors.iter().all(|conn| matches!(c.vrr_supported(*conn), Ok(VrrSupport::Supported)));
+        if on && !supported {
+            return Err("the monitor does not support it without a modeset".to_string());
+        }
+        c.use_vrr(on).map_err(|e| e.to_string())
+    });
+    match result {
+        Ok(()) => tracing::debug!("monitor {name}: adaptive sync {}", if on { "on" } else { "off" }),
+        Err(err) => {
+            tracing::warn!("monitor {name}: no adaptive sync: {err}");
+            surface.vrr_unsupported = true;
+        }
+    }
 }
 
 /// Set the CRTC's gamma ramps (red, green and blue one after another), or a linear ramp
@@ -490,7 +519,8 @@ impl Dune {
         );
         let wl_mode = WlMode::from(mode);
         output.set_preferred(wl_mode);
-        output.change_current_state(Some(wl_mode), None, None, None);
+        let scale = smithay::output::Scale::Fractional(self.config.outputs.get(&name).and_then(|c| c.scale).unwrap_or(1.0));
+        output.change_current_state(Some(wl_mode), None, Some(scale), None);
         let global = output.create_global::<Dune>(&self.display_handle);
 
         let planes = device.planes(&crtc).ok();
@@ -510,7 +540,7 @@ impl Dune {
             }
         };
         tracing::info!("monitor {name}: {}x{}@{}", mode.size().0, mode.size().1, mode.vrefresh());
-        gpu.surfaces.insert(crtc, Surface { output: output.clone(), global, drm_output, queued: None, gamma: None });
+        gpu.surfaces.insert(crtc, Surface { output: output.clone(), global, drm_output, queued: None, gamma: None, vrr_unsupported: false });
         self.space.map_output(&output, (0, 0));
     }
 
@@ -533,7 +563,8 @@ impl Dune {
             &outputs
                 .iter()
                 .map(|o| {
-                    let width = o.current_mode().map_or(0, |m| m.size.w);
+                    let pixels = o.current_mode().map_or(0, |m| m.size.w);
+                    let width = crate::scale::logical_width(pixels, o.current_scale().fractional_scale());
                     (width, self.config.outputs.get(&o.name()).and_then(|c| c.position))
                 })
                 .collect::<Vec<_>>(),
@@ -577,9 +608,15 @@ impl Dune {
         // The renderer is lent out while the scene is built from the rest of the state.
         let Some(mut renderer) = udev.renderer.take() else { return };
         let elements = self.output_elements(&mut renderer, &output, true);
+        let vrr = match self.config.outputs.get(&output.name()).map(|c| c.adaptive_sync).unwrap_or_default() {
+            AdaptiveSync::Off => false,
+            AdaptiveSync::On => true,
+            AdaptiveSync::Fullscreen => self.covers.contains_key(&output.name()),
+        };
 
         let Backend::Udev(udev) = &mut self.backend else { unreachable!() };
         let surface = udev.gpu.as_mut().and_then(|g| g.surfaces.get_mut(&crtc)).unwrap();
+        set_vrr(surface, vrr);
         // No overlay planes: a game scanned out on one covered the composited pointer
         // (niri leaves them off by default too).
         let flags = FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT | FrameFlags::ALLOW_CURSOR_PLANE_SCANOUT;

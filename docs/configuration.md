@@ -13,6 +13,11 @@ window manager and `finder.toml` for dune-finder. Every setting is optional. Sav
 `dune.toml` applies it live, except monitor modes, `off`, `xwayland` and `exec`;
 dune-finder reads `finder.toml` each time it opens.
 
+A monitor's `scale` makes everything on it bigger (1.25, 1.5, 2) and applies live. Apps
+that know fractional scaling (GTK4, Qt6, Firefox, Chromium with Wayland) draw at the
+monitor's real pixels and stay sharp. Others are scaled up and look a little soft, and so
+do X11 apps and dune's own tab titles for now.
+
 ```toml
 # ~/.config/dune/dune.toml
 terminal = "wezterm start --always-new-process"
@@ -51,7 +56,9 @@ accel_speed = 0.0              # -1.0 .. 1.0
 
 [output.HDMI-A-1]              # monitors, by connector name
 mode = "2560x1080@60"
-position = [0, 0]
+position = [0, 0]              # in logical pixels (the monitor's divided by its scale)
+scale = 1.25                   # 0.5-4.0, fractional too; default 1
+adaptive_sync = "fullscreen"   # VRR: "on", "off" (default), "fullscreen" (only while a tile is)
 
 [output.DP-1]
 off = true

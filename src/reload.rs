@@ -67,7 +67,8 @@ impl Dune {
             self.configure_input_devices();
         }
         let positions = |c: &Config| c.outputs.iter().map(|(n, o)| (n.clone(), o.position)).collect::<Vec<_>>();
-        if positions(&self.config) != positions(&old) && matches!(self.backend, Backend::Udev(_)) {
+        let scaled = self.apply_output_scales();
+        if (scaled || positions(&self.config) != positions(&old)) && matches!(self.backend, Backend::Udev(_)) {
             self.place_outputs();
         }
         self.arrange();

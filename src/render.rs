@@ -10,7 +10,7 @@ use smithay::{
             AsRenderElements, Element, Kind,
             memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             render_elements,
-            utils::CropRenderElement,
+            utils::{CropRenderElement, RescaleRenderElement},
             solid::{SolidColorBuffer, SolidColorRenderElement},
             texture::TextureRenderElement,
             surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture, render_elements_from_surface_tree},
@@ -102,6 +102,10 @@ render_elements! {
     Closing=TextureRenderElement<GlesTexture>,
     RoundedClosing=Rounded<TextureRenderElement<GlesTexture>>,
 }
+
+/// What an output shows, in its own pixels: the scene, laid out in logical pixels, scaled
+/// by the output's `scale` (1: as it is).
+pub type ScaledElements = RescaleRenderElement<OutputRenderElements>;
 
 /// Buffers behind the decorations, kept between frames so unchanged ones cause no damage.
 #[derive(Default)]
@@ -392,8 +396,17 @@ impl Dune {
         }
     }
 
-    /// Everything to draw on `output`, front first.
-    pub fn output_elements(
+    /// Everything to draw on `output`, front first, in its pixels.
+    pub fn output_elements(&mut self, renderer: &mut GlesRenderer, output: &Output, with_pointer: bool) -> Vec<ScaledElements> {
+        let scale = output.current_scale().fractional_scale();
+        self.scene_elements(renderer, output, with_pointer)
+            .into_iter()
+            .map(|e| RescaleRenderElement::from_element(e, (0, 0).into(), scale))
+            .collect()
+    }
+
+    /// Everything on `output`, front first, in logical pixels (as if its scale were 1).
+    fn scene_elements(
         &mut self,
         renderer: &mut GlesRenderer,
         output: &Output,
@@ -795,6 +808,7 @@ impl Dune {
     /// After a frame on `output`: let its clients draw the next one, and tidy up.
     pub fn post_render(&mut self, output: &Output) {
         let time = self.start_time.elapsed();
+        self.send_preferred_scale(output);
         self.space.elements().for_each(|window| {
             window.send_frame(output, time, Some(Duration::ZERO), |_, _| Some(output.clone()))
         });

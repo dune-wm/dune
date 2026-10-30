@@ -17,6 +17,7 @@ mod privacy;
 mod reload;
 mod rounded;
 mod rules;
+mod scale;
 mod render;
 mod screencopy;
 mod scratchpad;

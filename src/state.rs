@@ -197,6 +197,7 @@ pub struct Dune {
 
     pub layer_shell_state: WlrLayerShellState,
     pub viewporter_state: ViewporterState,
+    pub fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
     pub cursor_shape_state: CursorShapeManagerState,
     /// A layer (dune-finder, a launcher) that asked for the keyboard; it has it until it closes.
     pub layer_focus: Option<WlSurface>,
@@ -310,6 +311,8 @@ impl Dune {
         let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
         // Clients scaling their buffers (xwayland-satellite requires it).
         let viewporter_state = ViewporterState::new::<Self>(&dh);
+        // Monitor scales like 1.25 told exactly, so clients draw sharp at them.
+        let fractional_scale_state = smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(&dh);
         // Named cursors (GTK4 otherwise draws its own, sized by its own guess).
         let cursor_shape_state = CursorShapeManagerState::new::<Self>(&dh);
         let workspaces = crate::workspaces::WorkspaceState::new(&dh);
@@ -442,6 +445,7 @@ impl Dune {
             config,
             layer_shell_state,
             viewporter_state,
+            fractional_scale_state,
             cursor_shape_state,
             layer_focus: None,
             dmabuf_state: DmabufState::new(),

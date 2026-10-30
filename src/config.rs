@@ -43,7 +43,9 @@
 //! # Monitors, by connector name (dune logs them as `monitor HDMI-A-1: ...`)
 //! [output.HDMI-A-1]
 //! mode = "2560x1080@60"       # WIDTHxHEIGHT[@HZ]; default: the monitor's preferred mode
-//! position = [0, 0]           # top-left corner; unset ones go to the right of the rest
+//! position = [0, 0]           # top-left corner, in logical pixels; unset ones go to the right of the rest
+//! scale = 1.5                 # 0.5-4.0, fractional too; default 1
+//! adaptive_sync = "fullscreen"  # VRR: on, off (default) or fullscreen (only while a tile is)
 //! [output.DP-1]
 //! off = true                  # leave this monitor dark
 //!
@@ -544,11 +546,24 @@ pub struct InputConfig {
 }
 
 /// Settings of one monitor (`[output.NAME]`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct OutputConfig {
     pub mode: Option<OutputMode>,
     pub position: Option<(i32, i32)>,
+    /// Logical pixels are this many of the monitor's (1.25, 2); `None`: 1.
+    pub scale: Option<f64>,
+    pub adaptive_sync: AdaptiveSync,
     pub off: bool,
+}
+
+/// Variable refresh rate (FreeSync, G-Sync compatible) of a monitor that has it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AdaptiveSync {
+    #[default]
+    Off,
+    On,
+    /// Only while a tile is fullscreen on it (a game), so the desktop never flickers.
+    Fullscreen,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -706,6 +721,8 @@ struct MouseFile {
 struct OutputFile {
     mode: Option<String>,
     position: Option<[i32; 2]>,
+    scale: Option<f64>,
+    adaptive_sync: Option<String>,
     off: bool,
 }
 
@@ -852,7 +869,25 @@ fn outputs(file: &BTreeMap<String, OutputFile>) -> BTreeMap<String, OutputConfig
                 }
                 mode
             });
-            let config = OutputConfig { mode, position: output.position.map(|[x, y]| (x, y)), off: output.off };
+            let scale = output.scale.and_then(|value| {
+                let scale = crate::scale::valid_scale(value);
+                if scale.is_none() {
+                    let (min, max) = (crate::scale::MIN_SCALE, crate::scale::MAX_SCALE);
+                    tracing::warn!("ignoring `output.{name}.scale = {value}`: not from {min} to {max}");
+                }
+                scale
+            });
+            let adaptive_sync = match output.adaptive_sync.as_deref().map(str::to_lowercase).as_deref() {
+                None | Some("off") => AdaptiveSync::Off,
+                Some("on") => AdaptiveSync::On,
+                Some("fullscreen") => AdaptiveSync::Fullscreen,
+                Some(other) => {
+                    tracing::warn!("ignoring `output.{name}.adaptive_sync = {other}`: not on, off or fullscreen");
+                    AdaptiveSync::Off
+                }
+            };
+            let position = output.position.map(|[x, y]| (x, y));
+            let config = OutputConfig { mode, position, scale, adaptive_sync, off: output.off };
             (name.clone(), config)
         })
         .collect()
@@ -874,6 +909,14 @@ mod tests {
         assert_eq!(c.keyboard_options, "");
         assert_eq!(c.terminal, "wezterm start --always-new-process");
         assert_eq!(c.modifier, "alt");
+    }
+
+    #[test]
+    fn output_scale_and_adaptive_sync() {
+        let c = config("[output.DP-1]\nscale = 1.25\nadaptive_sync = \"Fullscreen\"\n[output.HDMI-A-1]\nscale = 9.0\nadaptive_sync = \"maybe\"\n");
+        assert_eq!((c.outputs["DP-1"].scale, c.outputs["DP-1"].adaptive_sync), (Some(1.25), AdaptiveSync::Fullscreen));
+        // Out of range or unknown: the defaults.
+        assert_eq!((c.outputs["HDMI-A-1"].scale, c.outputs["HDMI-A-1"].adaptive_sync), (None, AdaptiveSync::Off));
     }
 
     #[test]
