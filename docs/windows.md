@@ -83,6 +83,9 @@ Rows share the height of the monitor, tiles in a row share the width of the colu
 | `Mod+q` | close the tile |
 | `Mod+Shift+q` | close the column, every tab of it |
 
+When the last window of a tile closes, the tile shrinks towards its middle and fades out
+(150 ms) while the tiles left slide into its place.
+
 **Edge splits**: with Mod held, the pointer near the edge of a tile lights a band along that
 edge. A Mod+click there opens an empty container on that side, with a compact dune-finder
 that shows no list until you type.

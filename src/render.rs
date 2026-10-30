@@ -12,9 +12,10 @@ use smithay::{
             render_elements,
             utils::CropRenderElement,
             solid::{SolidColorBuffer, SolidColorRenderElement},
+            texture::TextureRenderElement,
             surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture, render_elements_from_surface_tree},
         },
-        gles::{GlesPixelProgram, GlesRenderer, element::PixelShaderElement},
+        gles::{GlesPixelProgram, GlesRenderer, GlesTexture, element::PixelShaderElement},
     },
     desktop::{PopupManager, layer_map_for_output},
     input::pointer::{CursorImageAttributes, CursorImageStatus},
@@ -97,6 +98,9 @@ render_elements! {
     RoundedSurface=Rounded<CropRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>>,
     /// With `corner_radius`: tab bars, rounded as the tile they top.
     RoundedImage=Rounded<MemoryRenderBufferRenderElement<GlesRenderer>>,
+    /// Tiles closing: the last frame of their window (`crate::closing`), and rounded.
+    Closing=TextureRenderElement<GlesTexture>,
+    RoundedClosing=Rounded<TextureRenderElement<GlesTexture>>,
 }
 
 /// Buffers behind the decorations, kept between frames so unchanged ones cause no damage.
@@ -162,7 +166,7 @@ fn block(
 
 impl Dune {
     /// The rectangle of `tile` when it is shown on `output`.
-    fn shown_rect(&self, tile: TileId, output: &Output) -> Option<Rect> {
+    pub(crate) fn shown_rect(&self, tile: TileId, output: &Output) -> Option<Rect> {
         self.on_output(tile, output).then_some(())?;
         self.shown.iter().any(|(t, _)| *t == tile).then_some(())?;
         self.geometries.iter().find(|(t, _)| *t == tile).map(|(_, r)| self.drawn_rect(tile, *r))
@@ -170,7 +174,7 @@ impl Dune {
 
     /// A tile's `rect` grown to take in the part of its column's bar right above it: the
     /// whole bar, or the tile's share of it when its row is split side by side.
-    fn with_tab_bar(&self, rect: Rect) -> Rect {
+    pub(crate) fn with_tab_bar(&self, rect: Rect) -> Rect {
         self.tab_bars.iter().find_map(|b| under_bar(self.drawn_bar(b), rect)).unwrap_or(rect)
     }
 
@@ -184,7 +188,7 @@ impl Dune {
     /// The corners of `tile`'s box `outer` (with its tab bar): `corner_radius`, but square
     /// where it meets a neighbour of its column (the tile above or below, beside it in its
     /// row), so only the column's own corners round.
-    fn radii(&self, tile: TileId, outer: Rect) -> Radii {
+    pub(crate) fn radii(&self, tile: TileId, outer: Rect) -> Radii {
         let radius = self.config.corner_radius;
         if self.is_floating(tile) {
             return [radius; 4];
@@ -439,6 +443,16 @@ impl Dune {
             elements.extend(self.decoration_elements(output, &shaders, &|t| t == *float));
             elements.extend(self.private_elements(renderer, output, &shaders, &|t| t == *float));
             elements.extend(self.window_elements(renderer, output, &shaders, &|t| t == *float && public(t)));
+        }
+        // Closing tiles over the strip they are leaving.
+        if let Some(origin) = self.space.output_geometry(output).map(|g| g.loc) {
+            let clip = shaders.clip.as_ref().filter(|_| self.config.corner_radius > 0);
+            for (element, local, radii, size) in self.closing_elements((origin.x, origin.y), &output.name()) {
+                elements.push(match clip {
+                    Some(clip) => OutputRenderElements::RoundedClosing(Rounded::new(element, clip, size, local, radii)),
+                    None => OutputRenderElements::Closing(element),
+                });
+            }
         }
         let tiled = |t: TileId| !floats.contains(&t);
         elements.extend(self.options_elements(output, &shaders, &tiled));

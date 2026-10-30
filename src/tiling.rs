@@ -58,7 +58,7 @@ fn lerp_rect(from: Rect, to: Rect, t: f64) -> Rect {
 }
 
 /// Ease-out cubic: quick at first, slowing into place.
-fn ease_out(t: f64) -> f64 {
+pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
@@ -496,6 +496,9 @@ impl Dune {
             return;
         };
 
+        // The last window: its frame, to fade out if the tile goes (while it is mapped).
+        let last = self.tiles.get(&id).is_some_and(|t| t.stack.len() == 1);
+        let snapshot = last.then(|| self.closing_snapshot(id, &self.tiles[&id].stack[pos].clone())).flatten();
         let tile = self.tiles.get_mut(&id).unwrap();
         let window = tile.stack.remove(pos);
         self.space.unmap_elem(&window);
@@ -521,6 +524,11 @@ impl Dune {
             }
         } else {
             tracing::info!(tile = id, "window closed, tile removed");
+            // The rest slide into its place while it shrinks and fades there.
+            if let Some(closing) = snapshot {
+                self.closing.push(closing);
+                self.animate_resize();
+            }
             let next = self.neighbor_of(id);
             self.remove_from_layouts(id);
             self.tiles.remove(&id);

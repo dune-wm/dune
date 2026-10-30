@@ -1,5 +1,6 @@
 #![allow(irrefutable_let_patterns)]
 
+mod closing;
 mod config;
 mod cursor;
 mod desktops;
