@@ -90,13 +90,21 @@ pub fn dock_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// `dune recording stop`: stop the recording running. `dune recording watch`: a waybar
+/// `dune recording stop`: stop the recording running. `dune recording region|tile|screen`:
+/// record that, or stop the recording running (a bar's button). `dune recording audio`: turn
+/// recording the microphone on or off (scrolling on the button). `dune recording menu`: stop the
+/// recording running, else show dune-finder's recording panel (a click on the button). `dune recording watch`: a waybar
 /// JSON line (`return-type: json`) now and on every change, the time recorded going on each
 /// second while one runs, until dune goes away. `started` / `ended` are what the
 /// recording's shell tells dune (`crate::screenshot`).
 pub fn recording_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("stop") => ask(&Request::RecordingStop, Duration::from_secs(1)).map(|_| ()),
+        Some(what @ ("region" | "tile" | "screen")) => {
+            ask(&Request::RecordingToggle { what: what.into() }, Duration::from_secs(1)).map(|_| ())
+        }
+        Some("audio") => ask(&Request::RecordingAudio, Duration::from_secs(1)).map(|_| ()),
+        Some("menu") => ask(&Request::RecordingMenu, Duration::from_secs(1)).map(|_| ()),
         Some(state @ ("started" | "ended")) => {
             let area = args.get(1).and_then(|g| dune_common::protocol::parse_geometry(g));
             send(&Request::Recording { started: state == "started", area })
@@ -113,35 +121,43 @@ pub fn recording_command(args: &[String]) -> Result<(), String> {
             });
             let mut out = std::io::stdout().lock();
             let mut since: Option<u64> = None;
+            let mut mic = false;
             let mut last = String::new();
             loop {
                 match rx.recv_timeout(Duration::from_secs(1)) {
-                    Ok(line) => since = line.strip_prefix("on ").and_then(|s| s.trim().parse().ok()),
+                    Ok(line) => {
+                        let mut words = line.split_whitespace();
+                        since = (words.next() == Some("on")).then(|| words.next().and_then(|s| s.parse().ok())).flatten();
+                        mic = line.ends_with(" mic");
+                    }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
                 }
                 let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                let line = recording_line(since.map(|s| now.saturating_sub(s)));
+                let line = recording_line(since.map(|s| now.saturating_sub(s)), mic);
                 if line != last {
                     writeln!(out, "{line}").and_then(|_| out.flush()).map_err(|e| e.to_string())?;
                     last = line;
                 }
             }
         }
-        _ => Err("usage: dune recording stop|watch".into()),
+        _ => Err("usage: dune recording menu|region|tile|screen|audio|stop|watch".into()),
     }
 }
 
-/// The waybar line for a recording going on for `elapsed` seconds, or none (empty, which
-/// waybar hides).
-fn recording_line(elapsed: Option<u64>) -> String {
+/// The waybar line for a recording going on for `elapsed` seconds, or the record button
+/// while none runs, after a camera (Nerd Font); 🎙 after it when recordings take the microphone (`mic`).
+fn recording_line(elapsed: Option<u64>, mic: bool) -> String {
+    let (icon, state) = if mic { (" 🎙", "on") } else { ("", "off") };
     match elapsed {
         Some(s) => format!(
-            r#"{{"text":"● {:02}:{:02}","tooltip":"Recording · click to stop","class":"recording"}}"#,
+            r#"{{"text":" ● {:02}:{:02}{icon}","tooltip":"Recording · click to stop","class":"recording"}}"#,
             s / 60,
             s % 60
         ),
-        None => r#"{"text":"","tooltip":"","class":"idle"}"#.into(),
+        None => format!(
+            r#"{{"text":" ⏺{icon}","tooltip":"Record · click for the options, middle click the tile, right click the monitor\nMicrophone {state} · scroll to turn it on or off","class":"idle"}}"#
+        ),
     }
 }
 
@@ -179,10 +195,12 @@ mod tests {
 
     #[test]
     fn the_recording_line_counts_the_time() {
-        assert_eq!(recording_line(None), r#"{"text":"","tooltip":"","class":"idle"}"#);
+        assert!(recording_line(None, false).contains(r#""text":" ⏺","#));
+        assert!(recording_line(None, true).contains(r#""text":" ⏺ 🎙","#));
         assert_eq!(
-            recording_line(Some(83)),
-            r#"{"text":"● 01:23","tooltip":"Recording · click to stop","class":"recording"}"#
+            recording_line(Some(83), false),
+            r#"{"text":" ● 01:23","tooltip":"Recording · click to stop","class":"recording"}"#
         );
+        assert!(recording_line(Some(83), true).contains(r#""text":" ● 01:23 🎙","#));
     }
 }

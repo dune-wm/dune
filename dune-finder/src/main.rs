@@ -3,7 +3,7 @@
 //! that dune starts for Mod+d, Mod+/ (the tile options) and Mod+Enter. It asks dune for the windows and to start or show what was chosen over the
 //! control socket (`dune_common::protocol`, `$DUNE_SOCKET`).
 //!
-//! `dune-finder [--mode apps|windows|files|jump|tile-options|system] [--output NAME] [--target TILE] [--slot TILE
+//! `dune-finder [--mode apps|windows|files|jump|tile-options|system|recording] [--output NAME] [--target TILE] [--slot TILE
 //! --at X,Y,W,H] [--compact] [--font FAMILY] [--icon-theme THEME] [--file-manager CMD]
 //! [--file-manager-terminal CMD] [--terminal CMD]` (the font, icon theme and file manager
 //! come from `finder.toml`, see `settings`; the flags win over it): `--target` is
@@ -19,6 +19,7 @@ mod files;
 mod finder;
 mod jump;
 mod panel;
+mod recording;
 mod settings;
 mod system;
 mod tabs;
@@ -55,6 +56,7 @@ fn parse(mut options: Options, mut args: impl Iterator<Item = String>) -> Result
                     "jump" => Mode::Jump,
                     "tile-options" => Mode::TileOptions,
                     "system" => Mode::System,
+                    "recording" => Mode::Recording,
                     other => return Err(format!("unknown mode `{other}`")),
                 }
             }
@@ -119,6 +121,7 @@ mod tests {
         assert_eq!(parse(Options::default(), args("")).unwrap().mode, Mode::Apps);
         assert_eq!(parse(Options::default(), args("--mode jump")).unwrap().mode, Mode::Jump);
         assert_eq!(parse(Options::default(), args("--mode tile-options")).unwrap().mode, Mode::TileOptions);
+        assert_eq!(parse(Options::default(), args("--mode recording")).unwrap().mode, Mode::Recording);
         assert!(parse(Options::default(), args("--compact")).unwrap().compact);
         assert!(!parse(Options::default(), args("")).unwrap().compact);
         assert!(parse(Options::default(), args("--mode x")).is_err());

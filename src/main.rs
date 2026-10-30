@@ -46,6 +46,9 @@ usage:
                                          one) / print a waybar JSON line on every change
   dune dock show|watch                   show the dock of the bar's monitor ($WAYBAR_OUTPUT_NAME)
                                          / print a waybar JSON line on every change
+  dune recording menu                    stop the recording running, else show the recording panel
+  dune recording region|tile|screen      record that, or stop the recording running
+  dune recording audio                   turn recording the microphone on or off
   dune recording stop|watch              stop the recording running / print a waybar JSON line
                                          on every change (with the time recorded)
   dune shell                             run the dune layer around $DUNE_USER_SHELL (what tiles run)";

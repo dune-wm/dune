@@ -84,6 +84,8 @@ pub enum FinderMode {
     Windows,
     /// The focused tile's options (Mod+/).
     TileOptions,
+    /// Record a region, the focused tile or the screen, the microphone (`dune recording menu`).
+    Recording,
 }
 
 impl FinderMode {
@@ -92,6 +94,7 @@ impl FinderMode {
             FinderMode::Apps => "apps",
             FinderMode::Windows => "windows",
             FinderMode::TileOptions => "tile-options",
+            FinderMode::Recording => "recording",
         }
     }
 }

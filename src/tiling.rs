@@ -1125,6 +1125,28 @@ impl Dune {
                 self.stop_recording();
                 return Some("ok".into());
             }
+            Request::RecordingToggle { what } => {
+                use crate::screenshot::Capture;
+                self.toggle_recording(match what.as_str() {
+                    "tile" => Capture::Tile,
+                    "screen" => Capture::Screen,
+                    _ => Capture::Region,
+                });
+                return Some("ok".into());
+            }
+            Request::RecordingAudio => {
+                self.toggle_recording_audio();
+                return Some("ok".into());
+            }
+            Request::RecordingState => {
+                return Some(crate::screenshot::state_line(self.recording_since, self.recording_audio));
+            }
+            Request::RecordingMenu => {
+                if !self.stop_recording() {
+                    self.toggle_finder(crate::launcher::FinderMode::Recording);
+                }
+                return Some("ok".into());
+            }
             // The listener keeps the connection (`ipc::listen`).
             Request::WatchScratchpad | Request::WatchRecording | Request::WatchDock { .. } => {}
             Request::Keys(keys) => {

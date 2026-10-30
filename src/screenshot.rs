@@ -65,6 +65,7 @@ fi
 /// `SCREENSHOT`), until SIGINT reaches the process group (a `record` key again):
 /// wf-recorder finishes the file, then the shell tells. `$DUNE_BIN recording` hears when
 /// wf-recorder starts, with the geometry it records unless a whole monitor, and ends.
+/// `$7` `mic`: wf-recorder takes the default microphone too.
 const RECORD: &str = r#"
 trap 'stopped=1' INT
 if [ -n "$5" ]; then
@@ -79,8 +80,8 @@ dune=${DUNE_BIN:-true}
 area=
 [ "$target" = -g ] && area=$value
 "$dune" recording started "$area" > /dev/null 2>&1
-notify-send -a dune "Recording" "$file"
-wf-recorder "$target" "$value" -f "$file" > /dev/null 2>&1 < /dev/null
+notify-send -a dune "Recording${7:+ with the $7}" "$file"
+wf-recorder ${7:+--audio} "$target" "$value" -f "$file" > /dev/null 2>&1 < /dev/null
 "$dune" recording ended > /dev/null 2>&1
 if [ -s "$file" ]; then
     notify-send -a dune "Recording saved" "$file"
@@ -101,11 +102,12 @@ pub enum Capture {
 }
 
 /// The line `dune recording watch` gets: `on SECONDS` with when the recording started
-/// (since the epoch), or `off`.
-pub fn state_line(since: Option<SystemTime>) -> String {
+/// (since the epoch), or `off`; then ` mic` when recordings take the microphone.
+pub fn state_line(since: Option<SystemTime>, audio: bool) -> String {
+    let mic = if audio { " mic" } else { "" };
     match since {
-        Some(t) => format!("on {}", t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())),
-        None => "off".into(),
+        Some(t) => format!("on {}{mic}", t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())),
+        None => format!("off{mic}"),
     }
 }
 
@@ -196,7 +198,8 @@ impl Dune {
         };
         let dir = self.config.recording_dir.clone();
         let done = Arc::new(AtomicBool::new(false));
-        let cmd = capture_command(RECORD, &[&dir, "Videos", "", "mp4", &flag, &value]);
+        let audio = if self.recording_audio { "mic" } else { "" };
+        let cmd = capture_command(RECORD, &[&dir, "Videos", "", "mp4", &flag, &value, audio]);
         self.recording = start(cmd, "recording", done.clone()).map(|pid| Recording { pid, done });
     }
 
@@ -218,13 +221,23 @@ impl Dune {
         self.recording_since = started.then(SystemTime::now);
         self.recording_area = area.filter(|_| started);
         self.arrange();
-        let line = state_line(self.recording_since);
+        self.tell_recording_watchers();
+    }
+
+    /// `dune recording audio`: recordings from now on take the microphone too, or no longer.
+    pub fn toggle_recording_audio(&mut self) {
+        self.recording_audio = !self.recording_audio;
+        self.tell_recording_watchers();
+    }
+
+    fn tell_recording_watchers(&mut self) {
+        let line = state_line(self.recording_since, self.recording_audio);
         self.recording_watchers.retain_mut(|w| writeln!(w, "{line}").is_ok());
     }
 
     /// A `watch_recording` connection: told the state now, and on every change.
     pub fn watch_recording(&mut self, mut stream: UnixStream) {
-        let line = state_line(self.recording_since);
+        let line = state_line(self.recording_since, self.recording_audio);
         if writeln!(stream, "{line}").is_ok() && stream.set_nonblocking(true).is_ok() {
             self.recording_watchers.push(stream);
         }
@@ -388,7 +401,8 @@ mod tests {
         tool(&dir, "slurp", "exit 1");
         tool(&dir, "notify-send", "");
         tool(&dir, "dune", "");
-        tool(&dir, "wf-recorder", "echo video > \"$4\"");
+        // The file is the last argument.
+        tool(&dir, "wf-recorder", "for f; do :; done; echo video > \"$f\"");
         assert!(run(&dir, RECORD, &["~/v", "Videos", "", "mp4", "-o", "DP-1"]).status().unwrap().success());
         let file = saved(&dir.join("v"), "mp4");
         assert!(log(&dir).contains(&format!("wf-recorder -o DP-1 -f {}", file.display())), "{}", log(&dir));
@@ -401,13 +415,21 @@ mod tests {
         assert!(log(&dir).contains(&format!("wf-recorder -g 10,20 300x400 -f {}", file.display())), "{}", log(&dir));
         assert!(log(&dir).contains("dune recording started 10,20 300x400\n"), "{}", log(&dir));
         assert!(!log(&dir).contains("slurp"));
+        // With the microphone.
+        let _ = fs::remove_file(&file);
+        assert!(run(&dir, RECORD, &["~/v", "Videos", "", "mp4", "-o", "DP-1", "mic"]).status().unwrap().success());
+        let file = saved(&dir.join("v"), "mp4");
+        assert!(log(&dir).contains(&format!("wf-recorder --audio -o DP-1 -f {}", file.display())), "{}", log(&dir));
+        assert!(log(&dir).contains(&format!("notify-send -a dune Recording with the mic {}", file.display())), "{}", log(&dir));
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn the_watch_line() {
-        assert_eq!(state_line(None), "off");
-        assert_eq!(state_line(Some(UNIX_EPOCH + Duration::from_secs(1700000000))), "on 1700000000");
+        assert_eq!(state_line(None, false), "off");
+        assert_eq!(state_line(None, true), "off mic");
+        assert_eq!(state_line(Some(UNIX_EPOCH + Duration::from_secs(1700000000)), false), "on 1700000000");
+        assert_eq!(state_line(Some(UNIX_EPOCH + Duration::from_secs(1700000000)), true), "on 1700000000 mic");
     }
 
 }

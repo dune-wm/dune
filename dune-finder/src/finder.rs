@@ -19,6 +19,7 @@ use crate::{
     icons::Icons,
     jump::{self, Jump},
     panel::{Row, View},
+    recording::{self, Record, Recording},
     system::{self, Power, System},
     tabs::Tab,
     tile_options::{self, TileOptions},
@@ -35,9 +36,11 @@ pub enum Mode {
     TileOptions,
     /// Power off, reboot, log out, stay awake.
     System,
+    /// Record a region, the tile or the screen; the microphone.
+    Recording,
 }
 
-/// The modes Mod+Tab goes through, in order (not the tile options: they stay).
+/// The modes Mod+Tab goes through, in order (not the tile options nor the recording: they stay).
 const CYCLE: [Mode; 5] = [Mode::Apps, Mode::Windows, Mode::Files, Mode::Jump, Mode::System];
 
 /// What the finder wants done.
@@ -65,6 +68,9 @@ pub enum Action {
     TileAction(TileAction),
     /// Power off, reboot, log out or turn Stay awake on or off, then close.
     Power(Power),
+    /// Record that or stop, then close; turn the microphone on or off and stay
+    /// (`show_recording` again with what dune says).
+    Record(Record),
 }
 
 pub struct Finder {
@@ -89,6 +95,8 @@ pub struct Finder {
     tile_options: Option<TileOptions>,
     /// The system actions, afresh each time they are shown.
     system: System,
+    /// The recording actions, given by `show_recording`.
+    recording: Option<Recording>,
     /// The recorded folders, the highest frecency first.
     load_jumps: Box<dyn FnMut() -> Vec<PathBuf>>,
     /// Whether dune's Stay awake is on, asked when the system mode is shown.
@@ -129,6 +137,7 @@ impl Finder {
             files_from_jump: false,
             tile_options: None,
             system: System::new(false),
+            recording: None,
             load_jumps,
             load_awake,
             home,
@@ -142,6 +151,7 @@ impl Finder {
             Mode::Jump => finder.show_jump(),
             Mode::TileOptions => finder.show_tile_options(Vec::new()),
             Mode::System => finder.show_system(),
+            Mode::Recording => finder.show_recording("off"),
             Mode::Apps => {}
         }
         finder
@@ -166,6 +176,7 @@ impl Finder {
             Mode::Jump => self.jump.as_ref().is_none_or(Jump::nothing_typed),
             Mode::TileOptions => self.tile_options.as_ref().is_none_or(TileOptions::nothing_typed),
             Mode::System => self.system.nothing_typed(),
+            Mode::Recording => self.recording.as_ref().is_none_or(Recording::nothing_typed),
         }
     }
 
@@ -219,6 +230,16 @@ impl Finder {
     pub fn show_tile_options(&mut self, options: Vec<TileOption>) {
         self.tile_options = Some(TileOptions::new(options));
         self.mode = Mode::TileOptions;
+    }
+
+    /// The recording actions, from dune's state line (`on SECONDS` or `off`, then ` mic`);
+    /// shown again, what was typed and chosen stays.
+    pub fn show_recording(&mut self, state: &str) {
+        match &mut self.recording {
+            Some(recording) => recording.set_state(state),
+            None => self.recording = Some(Recording::new(state)),
+        }
+        self.mode = Mode::Recording;
     }
 
     /// A key pressed: `sym` with `mods`, typing `text`.
@@ -275,6 +296,10 @@ impl Finder {
                 let step = self.system.feed(mods, sym, text);
                 self.system_step(step)
             }
+            Mode::Recording => {
+                let step = self.recording.as_mut().map_or(recording::Step::Close, |r| r.feed(mods, sym, text));
+                recording_step(step)
+            }
         }
     }
 
@@ -320,6 +345,10 @@ impl Finder {
             Mode::System => {
                 let step = self.system.click(row);
                 self.system_step(step)
+            }
+            Mode::Recording => {
+                let step = self.recording.as_mut().map_or(recording::Step::Continue, |r| r.click(row));
+                recording_step(step)
             }
         }
     }
@@ -500,6 +529,9 @@ impl Finder {
         if self.mode == Mode::System {
             return self.system.view();
         }
+        if let (Mode::Recording, Some(recording)) = (self.mode, &self.recording) {
+            return recording.view();
+        }
         match (self.mode, &self.windows, &self.files) {
             (Mode::Windows, Some(windows), _) => windows.view(icons, icon_size),
             (Mode::Files, _, Some(files)) => files.view(icons, icon_size, self.apps.note(), self.apps.side()),
@@ -530,6 +562,14 @@ fn tile_options_step(step: tile_options::Step) -> Action {
         tile_options::Step::Continue => Action::Continue,
         tile_options::Step::Close => Action::Close,
         tile_options::Step::Do(action) => Action::TileAction(action),
+    }
+}
+
+fn recording_step(step: recording::Step) -> Action {
+    match step {
+        recording::Step::Continue => Action::Continue,
+        recording::Step::Close => Action::Close,
+        recording::Step::Do(record) => Action::Record(record),
     }
 }
 

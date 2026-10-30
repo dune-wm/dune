@@ -28,6 +28,7 @@
 //! [capture]
 //! screenshot_dir = "~/shots"  # where the `screenshot` keys save; default $XDG_PICTURES_DIR/Screenshots, else ~/Pictures/Screenshots
 //! recording_dir = "~/videos"  # where `record` saves; default $XDG_VIDEOS_DIR, else ~/Videos
+//! record_audio = false        # recordings take the microphone too (`dune recording audio` flips it)
 //!
 //! [mouse]
 //! dock_click = "mod+right"    # the tile under the pointer (with its tabs) into the dock of its desktop; default none
@@ -559,6 +560,8 @@ pub struct Config {
     pub screenshot_dir: String,
     /// Where recordings go; empty: `$XDG_VIDEOS_DIR`.
     pub recording_dir: String,
+    /// Whether recordings start taking the microphone too.
+    pub record_audio: bool,
 }
 
 impl Config {
@@ -649,6 +652,7 @@ struct TabsFile {
 struct CaptureFile {
     screenshot_dir: String,
     recording_dir: String,
+    record_audio: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -741,6 +745,7 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         exec: file.exec.iter().filter(|c| !c.trim().is_empty()).cloned().collect(),
         screenshot_dir: file.capture.screenshot_dir.clone(),
         recording_dir: file.capture.recording_dir.clone(),
+        record_audio: file.capture.record_audio,
     }
 }
 

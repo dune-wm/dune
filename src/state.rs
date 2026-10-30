@@ -227,6 +227,8 @@ pub struct Dune {
     pub recording_since: Option<std::time::SystemTime>,
     /// What the recording takes, unless a whole monitor: framed on screen while it runs.
     pub recording_area: Option<crate::layout::Rect>,
+    /// Recordings take the microphone too (`[capture] record_audio`, `dune recording audio`).
+    pub recording_audio: bool,
     /// `dune recording watch` connections (bars), told when a recording starts and ends.
     pub recording_watchers: Vec<std::os::unix::net::UnixStream>,
     /// Tiles focused, the latest first: dune-finder lists windows in this order.
@@ -419,6 +421,7 @@ impl Dune {
             recording: None,
             recording_since: None,
             recording_area: None,
+            recording_audio: config.record_audio,
             recording_watchers: Vec::new(),
             recent: Vec::new(),
             edge_push: 0.0,

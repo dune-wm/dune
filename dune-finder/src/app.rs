@@ -43,6 +43,7 @@ use crate::{
     finder::{Action, Finder, Mode},
     icons::Icons,
     panel::{self, FONT_SIZE, SMALL_FONT_SIZE},
+    recording::Record,
     system::Power,
     tabs,
 };
@@ -159,6 +160,9 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
         finder.show_tile_options(rows);
     }
+    if options.mode == Mode::Recording {
+        finder.show_recording(&recording_state());
+    }
     let (w, h) = panel::panel_size(font.as_ref(), i32::MAX, panel::ROWS as i32 * panel::line_height(font.as_ref()));
     let compact = options.compact && finder.untouched();
 
@@ -235,6 +239,15 @@ fn awake(toggle: bool) -> bool {
             false
         }
     }
+}
+
+/// Whether a recording runs and takes the microphone, as dune says it (`on SECONDS` or
+/// `off`, then ` mic`).
+fn recording_state() -> String {
+    protocol::ask(&Request::RecordingState, ANSWER).unwrap_or_else(|err| {
+        eprintln!("dune-finder: cannot ask about the recording: {err}");
+        "off".into()
+    })
 }
 
 /// The rows of the tile options menu for `tile`, from dune.
@@ -333,9 +346,9 @@ impl App {
     fn place(&mut self) -> ((i32, i32), (i32, i32)) {
         self.list = self.shown_list();
         let font = self.font.as_ref();
-        // The tile options' rows are all there from the start: centered as they are.
+        // The tile options' and recording's rows are all there from the start: centered as they are.
         let full = match self.options.mode {
-            Mode::TileOptions => self.list,
+            Mode::TileOptions | Mode::Recording => self.list,
             _ => self.rows() as i32 * panel::line_height(font),
         };
         let (_, corner) = placement(font, self.output_size, self.options.at, full);
@@ -469,6 +482,23 @@ impl App {
                     }
                 }
             },
+            // The microphone flips in place: the panel stays, saying what dune says now.
+            Action::Record(Record::Microphone) => {
+                if let Err(err) = protocol::ask(&Request::RecordingAudio, ANSWER) {
+                    eprintln!("dune-finder: cannot turn the microphone on or off: {err}");
+                }
+                self.finder.show_recording(&recording_state());
+                return self.draw();
+            }
+            Action::Record(record) => {
+                let request = match record.what() {
+                    Some(what) => Request::RecordingToggle { what: what.into() },
+                    None => Request::RecordingStop,
+                };
+                if let Err(err) = protocol::ask(&request, ANSWER) {
+                    eprintln!("dune-finder: cannot record: {err}");
+                }
+            }
         }
         self.exit = true;
     }

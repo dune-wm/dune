@@ -24,7 +24,7 @@ Lock, idle, night light, X11, Waybar and the `dune` command line.
 | desktops | `ext/workspaces`, with `"on-click-right": "deactivate"` to lock / unlock |
 | dock | `custom`, `exec: dune dock watch`, `return-type: json`, `on-click: dune dock show`; first in `modules-left` (each bar follows the dock of its own monitor, from `$WAYBAR_OUTPUT_NAME`; the text is the count, class `empty` or `filled`; the tooltip lists the scratchpad's windows too, it being the dock's first cell) |
 | scratchpad | optional, the dock has it: `custom`, `exec: dune scratchpad watch`, `return-type: json`, `on-click: dune scratchpad show` |
-| recording | `custom`, `exec: dune recording watch`, `return-type: json`, `on-click: dune recording stop` |
+| recording | `custom`, `exec: dune recording watch`, `return-type: json`, `on-click: dune recording menu`, `on-click-middle: dune recording tile`, `on-click-right: dune recording screen`, `on-scroll-up` / `on-scroll-down: dune recording audio` (a record button while idle, the time recorded while one runs; a click shows the recording panel, or stops the one running, as any of them again does; scrolling turns the microphone on or off, 🎙 while on) |
 | night light | waybar's own module, which runs wlsunset |
 
 ## Command line
@@ -34,6 +34,9 @@ dune open [--split l|r|u|d] [--from TILE] [--cwd DIR] [--] COMMAND...   # a term
 dune-open COMMAND...                     # in a terminal: the program takes its tile
 dune scratchpad show | watch
 dune dock show | watch                   # for the monitor of $WAYBAR_OUTPUT_NAME, else the active one
+dune recording menu                      # the recording panel, or stop the recording running
+dune recording region | tile | screen     # record that, or stop the recording running
+dune recording audio                     # turn recording the microphone on or off
 dune recording stop | watch
 ```
 

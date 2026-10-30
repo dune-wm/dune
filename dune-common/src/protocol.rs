@@ -32,8 +32,17 @@
 //!   line with the windows in that monitor's dock now and on every change (`dune dock watch`);
 //! - `recording\tstarted|ended` — the recording's shell: wf-recorder started / ended;
 //! - `recording_stop\t` — stop the recording running (`dune recording stop`); answered `ok`;
+//! - `recording_toggle\tregion|tile|screen` — start recording that, or stop the recording
+//!   running, like the `record` keys (`dune recording region|tile|screen`); answered `ok`;
+//! - `recording_audio\t` — turn recording the microphone on or off, for the next recording
+//!   (`dune recording audio`); answered `ok`;
+//! - `recording_state\t` — answered with the line `watch_recording` writes (`on SECONDS` or
+//!   `off`, then ` mic`), for dune-finder's recording panel;
+//! - `recording_menu\t` — the record button: stop the recording running, else show dune-finder's
+//!   recording panel or hide it (`dune recording menu`); answered `ok`;
 //! - `watch_recording\t` — the connection stays open: dune writes `on SECONDS` (when the
-//!   recording started, since the epoch) or `off` now and on every change.
+//!   recording started, since the epoch) or `off`, followed by ` mic` while the microphone is
+//!   recorded, now and on every change;
 
 use std::{
     io::{Read, Write},
@@ -467,6 +476,14 @@ pub enum Request {
     Recording { started: bool, area: Option<(i32, i32, i32, i32)> },
     /// Stop the recording running.
     RecordingStop,
+    /// Record `what` (`region`, `tile` or `screen`), or stop the recording running.
+    RecordingToggle { what: String },
+    /// Turn recording the microphone on or off.
+    RecordingAudio,
+    /// Whether a recording runs and takes the microphone, as `WatchRecording` writes it.
+    RecordingState,
+    /// Stop the recording running, else show or hide dune-finder's recording panel.
+    RecordingMenu,
     /// Keep the connection, writing whether a recording runs on every change.
     WatchRecording,
 }
@@ -525,6 +542,10 @@ impl Request {
                 format!("recording\t{}{area}", if *started { "started" } else { "ended" })
             }
             Request::RecordingStop => "recording_stop\t".into(),
+            Request::RecordingToggle { what } => format!("recording_toggle\t{what}"),
+            Request::RecordingAudio => "recording_audio\t".into(),
+            Request::RecordingState => "recording_state\t".into(),
+            Request::RecordingMenu => "recording_menu\t".into(),
             Request::WatchRecording => "watch_recording\t".into(),
         }
     }
@@ -600,6 +621,10 @@ impl Request {
                 Some(Request::Recording { started, area: parse_geometry(area) })
             }
             "recording_stop" => Some(Request::RecordingStop),
+            "recording_toggle" => matches!(rest, "region" | "tile" | "screen").then(|| Request::RecordingToggle { what: rest.into() }),
+            "recording_audio" => Some(Request::RecordingAudio),
+            "recording_state" => Some(Request::RecordingState),
+            "recording_menu" => Some(Request::RecordingMenu),
             "watch_recording" => Some(Request::WatchRecording),
             _ => None,
         }
@@ -726,8 +751,13 @@ mod tests {
             Request::Recording { started: true, area: Some((-10, 20, 300, 40)) },
             Request::Recording { started: false, area: None },
             Request::RecordingStop,
+            Request::RecordingToggle { what: "tile".into() },
+            Request::RecordingAudio,
+            Request::RecordingState,
+            Request::RecordingMenu,
             Request::WatchRecording,
         ];
+        assert_eq!(Request::decode("recording_toggle\twindow"), None);
         for req in reqs {
             assert_eq!(Request::decode(&req.encode()), Some(req));
         }
