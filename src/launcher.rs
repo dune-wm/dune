@@ -75,6 +75,8 @@ pub struct FinderRun {
     /// The empty container it was opened for, and what had focus before; None once
     /// something was launched into it.
     pub slot: Option<(TileId, Option<TileId>)>,
+    /// The tile whose options it shows (Mod+/), darkened under it while it is open.
+    pub over: Option<TileId>,
 }
 
 /// What dune-finder lists first.
@@ -180,7 +182,8 @@ impl Dune {
         }
         match cmd.spawn() {
             Ok(mut child) => {
-                self.finder = Some(FinderRun { pid: child.id(), mode, slot });
+                let over = target.filter(|_| mode == FinderMode::TileOptions);
+                self.finder = Some(FinderRun { pid: child.id(), mode, slot, over });
                 std::thread::spawn(move || {
                     let _ = child.wait();
                 });

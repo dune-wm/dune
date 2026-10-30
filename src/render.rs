@@ -48,6 +48,8 @@ const RECORDING_COLOR: [f32; 4] = [0xef as f32 / 255.0, 0x44 as f32 / 255.0, 0x4
 const RECORDING_FRAME: i32 = 2;
 /// Darkens the tile being dragged (premultiplied, translucent).
 const DRAGGED_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.45];
+/// Darkens the tile whose options dune-finder shows over it (Mod+/).
+const OPTIONS_COLOR: [f32; 4] = DRAGGED_COLOR;
 /// Under each tiled window, where its client has not drawn yet (it grew): the dark of a
 /// tab strip, so a resize shows an empty tile instead of what is behind.
 const BACKDROP_COLOR: [f32; 4] = [0x1e as f32 / 255.0, 0x20 as f32 / 255.0, 0x29 as f32 / 255.0, 1.0];
@@ -105,6 +107,8 @@ pub struct Decorations {
     /// While a tile is dragged: the spot it will land on, and the tile itself.
     drop: SolidColorBuffer,
     dragged: SolidColorBuffer,
+    /// Over the tile whose options are open.
+    options: SolidColorBuffer,
     /// The edge of the split a Mod+click there would open.
     split_edge: SolidColorBuffer,
     /// Behind the dock shown, and the mark on its entry under the pointer; behind the fan of
@@ -128,6 +132,7 @@ pub struct Decorations {
     rounded_private: HashMap<TileId, RoundedRect>,
     rounded_drop: RoundedRect,
     rounded_dragged: RoundedRect,
+    rounded_options: RoundedRect,
 }
 
 /// A block of `color` over `rect` (global), placed from the output's `origin`: the solid
@@ -412,6 +417,7 @@ impl Dune {
             let only = |t: TileId| t == cover;
             // Fullscreen is square: it fills the monitor.
             let square = Shaders::default();
+            elements.extend(self.options_elements(output, &square, &only));
             elements.extend(self.private_elements(renderer, output, &square, &only));
             if !self.privacy.tile(cover) {
                 elements.extend(self.window_elements(renderer, output, &square, &only));
@@ -429,11 +435,13 @@ impl Dune {
         // Floats, front to back, each with its border over its window, above the strip.
         let floats: Vec<TileId> = self.floating.get(&output.name()).into_iter().flatten().rev().map(|(t, _)| *t).collect();
         for float in &floats {
+            elements.extend(self.options_elements(output, &shaders, &|t| t == *float));
             elements.extend(self.decoration_elements(output, &shaders, &|t| t == *float));
             elements.extend(self.private_elements(renderer, output, &shaders, &|t| t == *float));
             elements.extend(self.window_elements(renderer, output, &shaders, &|t| t == *float && public(t)));
         }
         let tiled = |t: TileId| !floats.contains(&t);
+        elements.extend(self.options_elements(output, &shaders, &tiled));
         elements.extend(self.decoration_elements(output, &shaders, &tiled));
         let tabs = self.tab_elements(renderer, output, &shaders);
         elements.extend(tabs);
@@ -442,6 +450,17 @@ impl Dune {
         elements.extend(self.backdrop_elements(output, &shaders, &tiled));
         elements.extend(self.layer_elements(renderer, output, &[Layer::Bottom, Layer::Background], false));
         elements
+    }
+
+    /// While dune-finder shows a tile's options (Mod+/): that tile darkened, tab bar and
+    /// all, when `only` picks it and it is on `output`.
+    fn options_elements(&mut self, output: &Output, shaders: &Shaders, only: &dyn Fn(TileId) -> bool) -> Vec<OutputRenderElements> {
+        let Some(origin) = self.space.output_geometry(output).map(|g| g.loc) else { return Vec::new() };
+        let Some(id) = self.finder.as_ref().and_then(|run| run.over).filter(|t| only(*t)) else { return Vec::new() };
+        let Some(outer) = self.shown_rect(id, output).map(|r| self.with_tab_bar(r)) else { return Vec::new() };
+        let radii = self.radii(id, outer);
+        let d = &mut self.decorations;
+        vec![block(&mut d.options, &mut d.rounded_options, shaders.rect.as_ref(), origin, outer, outer, radii, OPTIONS_COLOR)]
     }
 
     /// An opaque block with the lock mark over each private tile of `output` picked by
