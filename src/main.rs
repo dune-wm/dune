@@ -29,6 +29,7 @@ mod sound;
 mod state;
 mod tab_title;
 mod tiling;
+mod transaction;
 mod udev;
 mod windows;
 mod winit;

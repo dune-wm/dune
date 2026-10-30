@@ -51,6 +51,13 @@ pub struct ResizeAnimation {
     start: Instant,
 }
 
+impl ResizeAnimation {
+    /// A slide starting now, from where the tiles are drawn (`from`).
+    pub fn from_rects(from: HashMap<TileId, Rect>) -> ResizeAnimation {
+        ResizeAnimation { from, start: Instant::now() }
+    }
+}
+
 /// `from` moved towards `to` by `t` (0 to 1).
 fn lerp_rect(from: Rect, to: Rect, t: f64) -> Rect {
     let mix = |a: i32, b: i32| a + ((b - a) as f64 * t).round() as i32;
@@ -559,6 +566,9 @@ impl Dune {
         let Some(first) = outputs.first() else {
             return;
         };
+        // Where the tiles are drawn now: they stay there until the windows draw their new
+        // sizes (`crate::transaction`).
+        let before = self.drawn_now();
         // Tiles of a monitor that went away move to the first one.
         let gone: Vec<String> = self.layouts.keys().filter(|n| !outputs.iter().any(|o| o.name() == **n)).cloned().collect();
         for name in gone {
@@ -674,7 +684,13 @@ impl Dune {
         }
         self.tab_bars = tab_bars;
 
+        // Sizes go out first, then the windows wait where they are drawn, if any has a
+        // new size to draw.
         self.place_windows();
+        self.begin_transaction(before);
+        if self.transaction.is_some() {
+            self.place_windows();
+        }
         self.refresh_workspaces();
         self.refresh_scratchpad();
         self.refresh_dock();
@@ -706,8 +722,14 @@ impl Dune {
     fn place_windows(&mut self) {
         // Back to front: mapping an element puts it on top of the space, so floats end up
         // above the strip and clicks reach them.
-        let placed: Vec<(TileId, Rect)> = self.geometries.iter().rev().map(|(id, r)| (*id, self.drawn_rect(*id, *r))).collect();
-        for (id, rect) in &placed {
+        let placed: Vec<(TileId, Rect, Rect)> = self.geometries.iter().rev().map(|(id, r)| (*id, *r, self.drawn_rect(*id, *r))).collect();
+        for (id, target, rect) in &placed {
+            // A held layout keeps windows where they were drawn, but they are sent the size
+            // they are laid out at: that is what it waits for.
+            let size = match self.transaction.as_ref().and_then(|t| t.held(*id)) {
+                Some(_) => *target,
+                None => *rect,
+            };
             let Some(window) = self.tiles[id].top().cloned() else {
                 continue;
             };
@@ -721,7 +743,7 @@ impl Dune {
             }
             let toplevel = window.toplevel().unwrap();
             toplevel.with_pending_state(|state| {
-                state.size = Some((rect.w, rect.h).into());
+                state.size = Some((size.w, size.h).into());
                 // Tiled windows drop their shadows and rounded corners; floating ones keep them.
                 use xdg_toplevel::State::*;
                 for edge in [TiledLeft, TiledRight, TiledTop, TiledBottom] {
@@ -743,6 +765,9 @@ impl Dune {
 
     /// Where `id`, laid out at `target`, is drawn now: on its way there while a resize slides.
     pub fn drawn_rect(&self, id: TileId, target: Rect) -> Rect {
+        if let Some(held) = self.transaction.as_ref().and_then(|t| t.held(id)) {
+            return held;
+        }
         let Some(anim) = &self.resize_animation else { return target };
         let Some(from) = anim.from.get(&id) else { return target };
         let t = anim.start.elapsed().as_secs_f64() / RESIZE_ANIMATION.as_secs_f64();
@@ -751,13 +776,27 @@ impl Dune {
 
     /// Start a resize sliding from where the tiles are drawn now (so repeated keys glide on).
     pub fn animate_resize(&mut self) {
-        let from = self.geometries.iter().map(|(id, r)| (*id, self.drawn_rect(*id, *r))).collect();
+        let from = self.drawn_now();
         self.resize_animation = Some(ResizeAnimation { from, start: Instant::now() });
+        // Waiting for windows: the slide starts when the layout shows.
+        if let Some(transaction) = &mut self.transaction {
+            transaction.ask_animation();
+        }
     }
 
     /// Before a frame: move the windows of a sliding resize on (and stop it once there).
     pub fn step_resize_animation(&mut self) {
-        let Some(anim) = &self.resize_animation else { return };
+        let ended = self.step_transaction();
+        // The slide waits while the layout is held.
+        if self.transaction.is_some() {
+            return;
+        }
+        let Some(anim) = &self.resize_animation else {
+            if ended {
+                self.place_windows();
+            }
+            return;
+        };
         if anim.start.elapsed() >= RESIZE_ANIMATION {
             self.resize_animation = None;
         }
@@ -790,6 +829,10 @@ impl Dune {
             self.configure_waits.remove(&key);
             if toplevel.has_pending_changes() {
                 self.send_size(toplevel);
+            }
+            // A newer size went out meanwhile: the layout waits for that one.
+            if !self.configure_waits.contains_key(&key) {
+                self.transaction_drawn(&key);
             }
         }
     }

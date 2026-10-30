@@ -69,6 +69,8 @@ pub struct Dune {
     pub geometries: Vec<(TileId, Rect)>,
     /// A resize by keys or wheel sliding into place: tiles are drawn on their way there.
     pub resize_animation: Option<crate::tiling::ResizeAnimation>,
+    /// The layout held where it was drawn while windows draw their new sizes.
+    pub transaction: Option<crate::transaction::Transaction>,
     /// Tiles whose last window closed, shrinking and fading away (`crate::closing`).
     pub closing: Vec<crate::closing::Closing>,
     /// Sizes sent to toplevels that have not drawn them yet, with when they were sent.
@@ -356,6 +358,7 @@ impl Dune {
             next_tile: 1,
             geometries: Vec::new(),
             resize_animation: None,
+            transaction: None,
             closing: Vec::new(),
             configure_waits: HashMap::new(),
             shown: Vec::new(),

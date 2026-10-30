@@ -44,7 +44,9 @@ the right of the focused one and the view slides to show whatever takes focus, w
 ```
 
 - **Width** `Mod+r` cycles the column through ⅓, ½, ⅔ and full width; `Mod+=` / `Mod+-`
-  resize it by hand, `Mod+f` toggles full width.
+  resize it by hand, `Mod+f` toggles full width. When a change gives windows new sizes,
+  the layout stays as it was until they have drawn them (at most 200 ms), then every tile
+  moves at once, so a slow app never leaves its neighbours overlapping or a gap.
 - **Center** `Mod+Space` keeps the focused column in the middle of the monitor, even when
   that leaves empty space at an end, until focus goes to another column.
 
