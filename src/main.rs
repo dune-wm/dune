@@ -19,6 +19,7 @@ mod reload;
 mod rounded;
 mod rules;
 mod scale;
+mod seatop;
 mod render;
 mod screencopy;
 mod scratchpad;

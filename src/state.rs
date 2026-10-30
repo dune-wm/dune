@@ -27,7 +27,7 @@ use smithay::{
     },
 };
 
-use crate::layout::{Layout, Rect, Side, TileId};
+use crate::layout::{Layout, Rect, TileId};
 
 /// One slot of the layout: its windows, the first one put in it at the bottom. A program
 /// started with `dune-open` in its terminal, or an app launched as a tab of a float, is
@@ -45,33 +45,6 @@ impl Tile {
     pub fn top(&self) -> Option<&Window> {
         self.stack.last()
     }
-}
-
-/// A Mod+left button drag of a tile.
-#[derive(Clone, Copy, Debug)]
-pub struct MoveDrag {
-    pub tile: TileId,
-    /// Where the button went down.
-    pub start: Point<f64, Logical>,
-    /// The pointer went far enough to make it a drag rather than a click.
-    pub moved: bool,
-    /// Where a floating tile was when the drag started.
-    pub from: Option<Rect>,
-    /// Pressed near this edge of the tile (`split_edge`): a click there opens a split.
-    pub split: Option<Side>,
-    /// It is the `dock_click`: a click puts the tile in the dock instead of floating it.
-    pub dock: bool,
-}
-
-#[derive(Clone, Copy)]
-pub struct ResizeDrag {
-    pub tile: TileId,
-    /// Where the button went down.
-    pub start: Point<f64, Logical>,
-    /// The pointer when last seen.
-    pub last: Point<f64, Logical>,
-    /// It is the `dock_click`: a click (no drag) puts the tile in the dock.
-    pub dock: bool,
 }
 
 pub struct Dune {
@@ -122,10 +95,8 @@ pub struct Dune {
     pub fullscreen: HashSet<TileId>,
     /// By output: the fullscreen tile covering it now (laid out on its shown desktop).
     pub covers: HashMap<String, TileId>,
-    /// Mod+right button drag resizing a tile.
-    pub resize_drag: Option<ResizeDrag>,
-    /// Mod+left button drag moving a tile: it is dropped where the button is released.
-    pub move_drag: Option<MoveDrag>,
+    /// What the pointer is doing: pointing, or a Mod+drag (`crate::seatop`).
+    pub seatop: crate::seatop::Seatop,
     /// Floating tiles of each output, by output name, back to front.
     pub floating: HashMap<String, Vec<(TileId, Rect)>>,
     /// Where floating tiles came from in the strip, with the layout's output, to go back.
@@ -397,8 +368,7 @@ impl Dune {
             edge_counts: HashMap::new(),
             fullscreen: HashSet::new(),
             covers: HashMap::new(),
-            resize_drag: None,
-            move_drag: None,
+            seatop: Default::default(),
             floating: HashMap::new(),
             float_homes: HashMap::new(),
             tab_homes: HashMap::new(),

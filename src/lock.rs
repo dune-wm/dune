@@ -172,8 +172,7 @@ impl SessionLockHandler for Dune {
 impl Dune {
     /// The lock starts: drags and grabs end, and keyboard and pointer leave the clients.
     fn enter_lock(&mut self) {
-        self.move_drag = None;
-        self.resize_drag = None;
+        self.seatop = Default::default();
         self.edge_push = 0.0;
         // The pointer image a window chose goes too.
         self.cursor_status = CursorImageStatus::default_named();

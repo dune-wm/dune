@@ -242,7 +242,7 @@ impl Dune {
             .map(OutputRenderElements::Solid)
             .collect();
         }
-        let Some(id) = self.move_drag.map(|d| d.tile).filter(|id| !self.is_floating(*id)) else { return Vec::new() };
+        let Some(id) = self.seatop.moving().map(|d| d.tile).filter(|id| !self.is_floating(*id)) else { return Vec::new() };
         let pos = self.seat.get_pointer().unwrap().current_location();
         let area = self.drop_spot(id, pos).map(|spot| spot.area);
         let rect = self.shown_rect(id, output).map(|r| (r, self.with_tab_bar(r))).map(|(r, o)| (r, o, self.radii(id, o)));

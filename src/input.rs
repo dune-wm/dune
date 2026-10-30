@@ -24,7 +24,8 @@ use crate::{
     launcher::FinderMode,
     layout::{Direction, Layout, Rect, Side, TileId, split_band, split_edge},
     screenshot::Capture,
-    state::{Dune, MoveDrag, ResizeDrag},
+    seatop::{BTN_LEFT, BTN_RIGHT},
+    state::Dune,
 };
 
 /// What compositor keys do: the config's bindings (`Binding`), and VT switching.
@@ -158,10 +159,6 @@ impl From<Binding> for Action {
 
 /// How much one press of the resize keys changes a width or height.
 const RESIZE_STEP: f64 = 0.05;
-const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
-/// How far the pointer may move during a Mod+click before it counts as a drag.
-const CLICK_SLOP: f64 = 4.0;
 /// Scroll distance of one wheel notch (as smithay reports it).
 const SCROLL_NOTCH: f64 = 15.0;
 
@@ -479,22 +476,6 @@ impl Dune {
         }
     }
 
-    /// Mod+right drag: the tile under the pointer follows it, right/down growing it.
-    fn drag_resize(&mut self, pos: Point<f64, Logical>) {
-        let Some(drag) = self.resize_drag.as_mut() else { return };
-        let (id, last) = (drag.tile, std::mem::replace(&mut drag.last, pos));
-        if self.is_floating(id) {
-            return self.resize_float(id, pos.x - last.x, pos.y - last.y);
-        }
-        let output = self.space.outputs().find(|o| self.layouts.get(&o.name()).is_some_and(|l| l.contains(id)));
-        let Some(area) = output.and_then(|o| self.space.output_geometry(o)) else { return };
-        let (dx, dy) = ((pos.x - last.x) / area.size.w as f64, (pos.y - last.y) / area.size.h as f64);
-        self.change_tile(id, |l, id| {
-            l.resize_width(id, dx);
-            l.resize_height(id, dy);
-        });
-    }
-
     /// A resize key or Alt+scroll: a float grows by `dw`/`dh` around its middle, a tile in
     /// the strip takes `change`.
     fn resize_tile(&mut self, id: TileId, dw: f64, dh: f64, change: impl Fn(&mut Layout, TileId)) {
@@ -517,8 +498,7 @@ impl Dune {
     /// off screen or the focused column is centered (focusing it would slide the view under
     /// the pointer), a button or drag is going on, dune-finder is open or the session is locked.
     fn hover_focus(&mut self, pos: Point<f64, Logical>) {
-        let busy = self.move_drag.is_some()
-            || self.resize_drag.is_some()
+        let busy = !self.seatop.is_default()
             || self.finder.is_some()
             || self.dock_open.is_some()
             || self.session_lock.is_locked();
@@ -537,9 +517,8 @@ impl Dune {
     /// Mod held, no drag going on and the pointer near an edge of a tile of the strip: that
     /// tile, the side, and the band along that edge to light (`split_hint_at`).
     pub fn split_hint(&self) -> Option<(TileId, Side, Rect)> {
-        if self.resize_drag.is_some()
+        if self.seatop.dragging()
             || self.finder.is_some()
-            || self.move_drag.is_some_and(|d| d.moved)
             || self.session_lock.is_locked()
         {
             return None;
@@ -552,25 +531,13 @@ impl Dune {
     }
 
     /// The tile of the strip under `pos`, if `pos` is near one of its edges (`split_edge`).
-    fn split_hint_at(&self, pos: Point<f64, Logical>) -> Option<(TileId, Side, Rect)> {
+    pub fn split_hint_at(&self, pos: Point<f64, Logical>) -> Option<(TileId, Side, Rect)> {
         let (id, rect) = self.shown.iter().find(|(_, r)| r.contains(pos.x, pos.y)).copied()?;
         if self.is_floating(id) {
             return None;
         }
         let side = split_edge(&rect, pos.x, pos.y)?;
         Some((id, side, split_band(&rect, side)))
-    }
-
-    /// Mod+left drag: past a few pixels it is a drag, not a click; a float follows the pointer.
-    fn drag_move(&mut self, pos: Point<f64, Logical>) {
-        let Some(drag) = self.move_drag.as_mut() else { return };
-        if (pos.x - drag.start.x).hypot(pos.y - drag.start.y) > CLICK_SLOP {
-            drag.moved = true;
-        }
-        let drag = *drag;
-        if let (true, Some(from)) = (drag.moved, drag.from) {
-            self.drag_float(drag.tile, from, drag.start, pos);
-        }
     }
 
     fn run_action(&mut self, action: Action) {
@@ -746,8 +713,7 @@ impl Dune {
                 }
                 self.pointer_at(pos);
                 self.dock_hover((pos.x, pos.y));
-                self.drag_resize(pos);
-                self.drag_move(pos);
+                self.seatop_motion(pos);
                 let under = self.surface_under(pos);
                 pointer.motion(
                     self,
@@ -770,8 +736,7 @@ impl Dune {
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
                 self.pointer_at(pos);
                 self.dock_hover((pos.x, pos.y));
-                self.drag_resize(pos);
-                self.drag_move(pos);
+                self.seatop_motion(pos);
 
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().unwrap();
@@ -856,70 +821,19 @@ impl Dune {
                 let mod_held = modifier_held(&self.config.modifier, &mods);
                 let dock = self.config.dock_click.is_some_and(|c| c.matches(&mods, event.button_code()));
 
+                // Mod+left and Mod+right drags (`crate::seatop`) take their buttons;
+                // while one goes on, every button is its own.
+                let pos = pointer.current_location();
+                if self.seatop_button(event.button_code(), button_state, pos, mod_held, dock) {
+                    return;
+                }
+
                 // `dock_click` puts the tile under the pointer into the dock. On a button Mod
                 // drags with, only a click does (on release).
                 if dock && button_state == ButtonState::Pressed && !(mod_held && [BTN_LEFT, BTN_RIGHT].contains(&event.button_code())) {
                     let pos = pointer.current_location();
                     if let Some(id) = self.tile_at(pos.x, pos.y).or_else(|| self.tab_at(pos.x, pos.y)) {
                         return self.send_to_dock(id);
-                    }
-                }
-
-                // Mod+right button drags resize the tile instead of reaching the client.
-                if event.button_code() == BTN_RIGHT {
-                    let pos = pointer.current_location();
-                    if button_state == ButtonState::Released
-                        && let Some(drag) = self.resize_drag.take()
-                    {
-                        if drag.dock && (pos.x - drag.start.x).hypot(pos.y - drag.start.y) <= CLICK_SLOP {
-                            self.send_to_dock(drag.tile);
-                        }
-                        return;
-                    }
-                    if button_state == ButtonState::Pressed
-                        && mod_held
-                        && let Some(id) = self.tile_at(pos.x, pos.y).or_else(|| self.tab_at(pos.x, pos.y))
-                    {
-                        self.focus_tile(id);
-                        self.resize_drag = Some(ResizeDrag { tile: id, start: pos, last: pos, dock });
-                        return;
-                    }
-                }
-
-                // Mod+left button drags move the tile: it lands where the button is released,
-                // on this monitor or another one; a float just goes where it is dragged. Let go
-                // on a tab bar, either one joins that container as a tab. A tab grabbed in its
-                // bar and let go there takes the place under the pointer.
-                // A Mod+click without moving floats the tile, or puts a float back; near an
-                // edge of a tile of the strip (`split_hint`), it opens an empty split there.
-                if event.button_code() == BTN_LEFT {
-                    let pos = pointer.current_location();
-                    if button_state == ButtonState::Released
-                        && let Some(drag) = self.move_drag.take()
-                    {
-                        if !drag.moved {
-                            match drag.split {
-                                Some(side) => self.open_empty_split(drag.tile, side),
-                                None if drag.dock => self.send_to_dock(drag.tile),
-                                None => self.toggle_floating(drag.tile),
-                            }
-                        } else if drag.from.is_none() {
-                            self.drop_tile(drag.tile, pos);
-                        } else if let Some(target) = self.drop_spot(drag.tile, pos).filter(|s| s.tab).and_then(|s| s.target) {
-                            // A float let go on a tab bar becomes a tab there.
-                            self.join_tab(drag.tile, target);
-                        }
-                        return;
-                    }
-                    if button_state == ButtonState::Pressed
-                        && mod_held
-                        && let Some(id) = self.tile_at(pos.x, pos.y).or_else(|| self.tab_at(pos.x, pos.y))
-                    {
-                        let split = self.split_hint_at(pos).filter(|(t, ..)| *t == id).map(|(_, side, _)| side);
-                        self.focus_tile(id);
-                        let from = self.float_rect(id);
-                        self.move_drag = Some(MoveDrag { tile: id, start: pos, moved: false, from, split, dock });
-                        return;
                     }
                 }
 

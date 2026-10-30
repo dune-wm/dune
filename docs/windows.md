@@ -201,6 +201,9 @@ its tab.
 | `[mouse] dock_click` | the tile under the pointer into the dock |
 | push a screen edge | slide the strip |
 
+One drag at a time: while a Mod+drag goes on, the other buttons belong to it, and it ends
+when its button is let go, the session locks or its tile closes.
+
 ```text
    Mod+left drag of B onto D's column
   ┌──────┐┌──────┐┌──────┐          ┌──────┐┌──────┐
