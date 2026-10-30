@@ -100,6 +100,7 @@
 //! send_to_scratchpad = "mod+shift+grave"  # the tile off every desktop, into the scratchpad
 //! scratchpad = "mod+grave"            # the next scratchpad window floats here (on it again: back)
 //! close = "mod+q"
+//! close_group = "mod+shift+q"         # close every tile of the focused tile's column, tabs and all
 //! launcher = "mod+d"                  # dune-finder on the apps
 //! tile_options = "mod+slash"          # dune-finder on the focused tile's options (private, float, ...)
 //! switcher = "none"                   # dune-finder on the windows (`/` in it gets there too)
@@ -119,6 +120,14 @@
 //! record = "mod+shift+r"              # record a region chosen with the mouse (any record key again: stop)
 //! record_tile = "mod+ctrl+r"          # record the focused tile
 //! record_screen = "mod+ctrl+shift+r"  # record the active monitor
+//! ```
+//!
+//! Keys that run a command, like niri's `spawn`, go in `[spawn]`: the key, then the command
+//! (through the shell, from the home folder). A key `[keys]` already has stays there.
+//!
+//! ```toml
+//! [spawn]
+//! "mod+shift+Return" = "vivaldi-stable"
 //! ```
 //!
 //! The pointer pushing on against the left or right edge of the screens slides the strip
@@ -320,6 +329,7 @@ pub enum Binding {
     SendToScratchpad,
     Scratchpad,
     Close,
+    CloseGroup,
     Launcher,
     TileOptions,
     Switcher,
@@ -337,6 +347,8 @@ pub enum Binding {
     Record,
     RecordTile,
     RecordScreen,
+    /// Run the command at this place in `Config::spawn`.
+    Spawn(usize),
 }
 
 /// Every binding: its name in the file, what it does and its default keys. A key two of
@@ -381,6 +393,7 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("send_to_scratchpad", SendToScratchpad, "mod+shift+grave"),
         ("scratchpad", Scratchpad, "mod+grave"),
         ("close", Close, "mod+q"),
+        ("close_group", CloseGroup, "mod+shift+q"),
         ("launcher", Launcher, "mod+d"),
         ("tile_options", TileOptions, "mod+slash"),
         ("switcher", Switcher, "none"),
@@ -427,7 +440,7 @@ fn keys_of_specs(specs: &[&str], modifier: &str) -> Option<Vec<KeySpec>> {
 }
 
 /// The keys of every binding, in table order: the file's in place of the defaults.
-fn bindings(file: &BTreeMap<String, Keys>, modifier: &str) -> Vec<(Binding, KeySpec)> {
+fn bindings(file: &BTreeMap<String, Keys>, spawn: &BTreeMap<String, String>, modifier: &str) -> Vec<(Binding, KeySpec)> {
     let table = binding_table();
     for name in file.keys().filter(|name| !table.iter().any(|(n, ..)| n == *name)) {
         tracing::warn!("ignoring `keys.{name}`: dune has no key by that name");
@@ -458,6 +471,18 @@ fn bindings(file: &BTreeMap<String, Keys>, modifier: &str) -> Vec<(Binding, KeyS
             }
             taken.push((name.clone(), binding, key, from_file));
         }
+    }
+    // `[spawn]` after `[keys]`, in the order of `Config::spawn`.
+    for (n, spec) in spawn.keys().enumerate() {
+        let Some(key) = KeySpec::parse(spec, modifier) else {
+            tracing::warn!("ignoring `spawn.\"{spec}\"`: not a key like mod+q or mod+shift+Return");
+            continue;
+        };
+        if let Some((other, ..)) = taken.iter().find(|(_, _, k, _)| *k == key) {
+            tracing::warn!("`spawn.\"{spec}\"`: {key} already does `{other}`, it stays there");
+            continue;
+        }
+        taken.push((format!("spawn.\"{spec}\""), Binding::Spawn(n), key, true));
     }
     taken.into_iter().map(|(_, binding, key, _)| (binding, key)).collect()
 }
@@ -538,6 +563,8 @@ pub struct Config {
     pub bindings: Vec<(Binding, KeySpec)>,
     /// What the `lock` key runs, through the shell.
     pub lock_command: String,
+    /// The commands of `[spawn]`, by `Binding::Spawn`.
+    pub spawn: Vec<String>,
     /// Show the desktop the launcher opens an app on, instead of staying here.
     pub follow: bool,
     /// The tile under the pointer takes focus as the pointer moves.
@@ -629,6 +656,7 @@ struct File {
     input: InputConfig,
     output: BTreeMap<String, OutputFile>,
     keys: BTreeMap<String, Keys>,
+    spawn: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -734,7 +762,8 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         terminal: get("DUNE_TERMINAL", &file.terminal, "wezterm start --always-new-process"),
         modifier: modifier.clone(),
         xwayland: get("DUNE_XWAYLAND", &file.xwayland, "satellite"),
-        bindings: bindings(&file.keys, &modifier),
+        bindings: bindings(&file.keys, &file.spawn, &modifier),
+        spawn: file.spawn.values().cloned().collect(),
         lock_command: file.lock_command.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "swaylock -f".into()),
         follow: file.follow,
         focus_follows_mouse: file.focus_follows_mouse,
@@ -894,6 +923,19 @@ mod tests {
             assert_eq!(keys_of(&c, binding).is_empty(), none, "{name}");
             assert!(key_list(&defaults, "alt").is_some(), "{name} = {defaults}");
         }
+    }
+
+    #[test]
+    fn keys_spawn_commands() {
+        let c = config("modifier = \"super\"\n[spawn]\n\"mod+shift+Return\" = \"vivaldi\"\n\"mod+q\" = \"foot\"\n\"nope+x\" = \"foot\"\n\"mod+b\" = \"vivaldi-stable --new-window 'https://example.com'\"\n");
+        let Binding::Spawn(n) = c.bindings.iter().find(|(_, k)| *k == spec("super+shift+Return")).unwrap().0 else { panic!() };
+        assert_eq!(c.spawn[n], "vivaldi");
+        // The command goes to the shell whole, arguments and quotes included.
+        let Binding::Spawn(n) = c.bindings.iter().find(|(_, k)| *k == spec("super+b")).unwrap().0 else { panic!() };
+        assert_eq!(c.spawn[n], "vivaldi-stable --new-window 'https://example.com'");
+        // A key `[keys]` has stays there; one that is not a key is left out.
+        assert_eq!(keys_of(&c, Binding::Close), [spec("super+q")]);
+        assert_eq!(c.bindings.iter().filter(|(b, _)| matches!(b, Binding::Spawn(_))).count(), 2);
     }
 
     #[test]

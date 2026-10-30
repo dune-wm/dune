@@ -481,6 +481,11 @@ impl Layout {
         (!col.panes.is_empty()).then(|| col.leads())
     }
 
+    /// Every tile of the column `id` is in, tab by tab; empty when it is not in the strip.
+    pub fn column_tiles(&self, id: TileId) -> Vec<TileId> {
+        self.find(id).map(|(c, _, _)| self.columns[c].all_tiles()).unwrap_or_default()
+    }
+
     /// The id of the column `id` is in (see `GroupId`).
     pub fn group_id(&self, id: TileId) -> Option<GroupId> {
         self.find(id).map(|(c, _, _)| self.columns[c].id)
@@ -1536,6 +1541,16 @@ mod tests {
         // The active tab gets the container minus its bar; the others are not laid out.
         assert_eq!(g, vec![(4, Rect::new(0, TAB_HEIGHT, 500, 600 - TAB_HEIGHT)), (2, Rect::new(500, 0, 500, 600))]);
         assert_eq!(l.tab_bars(), &[TabBar { rect: Rect::new(0, 0, 500, TAB_HEIGHT), tabs: vec![1, 3, 4], active: 4 }]);
+    }
+
+    #[test]
+    fn column_tiles_are_every_tab_of_the_column() {
+        let l = tabbed();
+        let mut column = l.column_tiles(3);
+        column.sort();
+        assert_eq!(column, vec![1, 3, 4]);
+        assert_eq!(l.column_tiles(2), vec![2]);
+        assert!(l.column_tiles(9).is_empty());
     }
 
     #[test]

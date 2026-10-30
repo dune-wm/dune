@@ -81,6 +81,7 @@ Rows share the height of the monitor, tiles in a row share the width of the colu
 | `Mod+Return` | an empty container, with dune-finder to fill it |
 | `Mod+v` / `Mod+s` | a terminal right of / below the tile, in its folder |
 | `Mod+q` | close the tile |
+| `Mod+Shift+q` | close the column, every tab of it |
 
 **Edge splits**: with Mod held, the pointer near the edge of a tile lights a band along that
 edge. A Mod+click there opens an empty container on that side, with a compact dune-finder

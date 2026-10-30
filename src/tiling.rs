@@ -1022,6 +1022,24 @@ impl Dune {
         }
     }
 
+    /// Close the windows of every tile in the focused tile's column, tabs and all (a
+    /// floating tile: its own); its empty containers go too.
+    pub fn close_group(&mut self) {
+        let Some(id) = self.focused else { return };
+        let group = self.output_of(id).and_then(|o| self.layouts.get(&o)).map(|l| l.column_tiles(id)).unwrap_or_default();
+        let group = if group.is_empty() { vec![id] } else { group };
+        for tile in group {
+            match self.tiles.get(&tile) {
+                Some(t) if t.stack.is_empty() && t.reserved => {
+                    self.forget_finder_slot(tile);
+                    self.drop_empty(tile, None);
+                }
+                Some(t) => t.stack.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+                None => {}
+            }
+        }
+    }
+
     pub fn tile_at(&self, x: f64, y: f64) -> Option<TileId> {
         self.shown.iter().find(|(_, r)| r.contains(x, y)).map(|(id, _)| *id)
     }

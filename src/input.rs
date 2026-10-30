@@ -56,6 +56,8 @@ enum Action {
     /// Mod+`: the shown scratchpad window focused back into it, else the next one out.
     Scratchpad,
     Close,
+    /// Close every tile of the focused tile's column, tabs and all.
+    CloseGroup,
     Quit,
     /// Mod+d: show dune-finder on the apps (again: hide it).
     Launcher,
@@ -95,6 +97,8 @@ enum Action {
     Screenshot(Capture),
     /// Mod+Shift+r / Mod+Ctrl+r / Mod+Ctrl+Shift+r: record the same (again: stop).
     Record(Capture),
+    /// A key of `[spawn]`: its command.
+    Spawn(usize),
     /// Ctrl+Alt+F1..F12 on a real session.
     SwitchVt(i32),
 }
@@ -126,6 +130,7 @@ impl From<Binding> for Action {
             Binding::SendToScratchpad => Action::SendToScratchpad,
             Binding::Scratchpad => Action::Scratchpad,
             Binding::Close => Action::Close,
+            Binding::CloseGroup => Action::CloseGroup,
             Binding::Launcher => Action::Launcher,
             Binding::Switcher => Action::Switcher,
             Binding::TileOptions => Action::TileOptions,
@@ -143,6 +148,7 @@ impl From<Binding> for Action {
             Binding::Record => Action::Record(Capture::Region),
             Binding::RecordTile => Action::Record(Capture::Tile),
             Binding::RecordScreen => Action::Record(Capture::Screen),
+            Binding::Spawn(n) => Action::Spawn(n),
         }
     }
 }
@@ -583,6 +589,7 @@ impl Dune {
             }
             Action::Scratchpad => self.toggle_scratchpad(),
             Action::Close => self.close_focused(),
+            Action::CloseGroup => self.close_group(),
             Action::Quit => self.loop_signal.stop(),
             Action::CycleTab(delta) => self.cycle_tab(delta),
             Action::MoveTab(dir) => self.move_tab(dir),
@@ -593,6 +600,11 @@ impl Dune {
             Action::Lock => crate::autostart(&self.config.lock_command),
             Action::Screenshot(what) => self.screenshot(what),
             Action::Record(what) => self.toggle_recording(what),
+            Action::Spawn(n) => {
+                if let Some(command) = self.config.spawn.get(n) {
+                    crate::autostart(command);
+                }
+            }
             Action::SwitchVt(vt) => self.change_vt(vt),
         }
     }

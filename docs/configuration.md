@@ -59,6 +59,9 @@ off = true
 close = ["super+q", "super+'"]
 launcher = "super+e"
 switcher = "none"
+
+[spawn]
+"mod+shift+Return" = "vivaldi"
 ```
 
 ```toml
@@ -71,7 +74,9 @@ file_manager_terminal = "foot"
 
 Every key can be rebound in `[keys]`, with one key or a list; a value replaces that key's
 defaults and `"none"` (or `[]`) turns it off. The names and defaults are listed at the top
-of `src/config.rs`. A setting dune does not know, or a value it cannot use, is warned about in
+of `src/config.rs`. Keys that run a command, like niri's `spawn`, go in `[spawn]`: the
+key, then the command (run through the shell, from the home folder); a key `[keys]` already
+has stays with it. A setting dune does not know, or a value it cannot use, is warned about in
 the log; a file that is not TOML is reported with its line, and the settings in use stay.
 Environment variables win over the file: `XKB_DEFAULT_*`, `DUNE_TERMINAL`, `DUNE_MOD`,
 `DUNE_XWAYLAND`.
@@ -102,6 +107,7 @@ Environment variables win over the file: `XKB_DEFAULT_*`, `DUNE_TERMINAL`, `DUNE
 | `float` | `Mod+Shift+Space` | float |
 | `send_to_scratchpad` / `scratchpad` | `` Mod+Shift+` `` / `` Mod+` `` | to / from the scratchpad |
 | `close` | `Mod+q` | close |
+| `close_group` | `Mod+Shift+q` | close the column: every tile, tabs and all |
 | `launcher` | `Mod+d` | dune-finder: apps |
 | `tile_options` | `Mod+/` | dune-finder: tile options |
 | `switcher` | none | dune-finder: windows |
