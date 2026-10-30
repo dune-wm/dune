@@ -450,6 +450,7 @@ impl Dune {
             self.next_tile += 1;
             self.tiles.insert(id, Tile::default());
             self.place_on_desk(id, &output, desk, target, side, float);
+            self.pending_rules.insert(id);
             (id, "launcher")
         } else {
             let id = self.next_tile;
@@ -459,6 +460,7 @@ impl Dune {
             self.next_tile += 1;
             self.tiles.insert(id, Tile::default());
             self.unclaimed_window = pid.map(|pid| (id, pid, Instant::now()));
+            self.pending_rules.insert(id);
             (id, "new tile")
         };
         tracing::info!(tile = id, "placing window: {how}");
@@ -828,6 +830,9 @@ impl Dune {
 
     pub fn focus_tile(&mut self, id: TileId) {
         if self.tiles.contains_key(&id) {
+            if self.focused != Some(id) {
+                tracing::info!(tile = id, app = ?self.tile_app_id(id), "focus");
+            }
             self.focused = Some(id);
             self.active_output = self.output_of(id).or(self.active_output.take());
             self.raise_float(id);

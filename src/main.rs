@@ -16,6 +16,7 @@ mod lock;
 mod privacy;
 mod reload;
 mod rounded;
+mod rules;
 mod render;
 mod screencopy;
 mod scratchpad;

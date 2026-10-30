@@ -3,6 +3,7 @@
 `dune.toml`, `finder.toml` and every default key.
 
 - [The files](#the-files)
+- [Window rules](#window-rules)
 - [Default keys](#default-keys)
 
 ## The files
@@ -62,6 +63,10 @@ switcher = "none"
 
 [spawn]
 "mod+shift+Return" = "vivaldi"
+
+[[rules]]                      # see Window rules below
+app_id = "^pavucontrol$"
+actions = ["float"]
 ```
 
 ```toml
@@ -80,6 +85,37 @@ has stays with it. A setting dune does not know, or a value it cannot use, is wa
 the log; a file that is not TOML is reported with its line, and the settings in use stay.
 Environment variables win over the file: `XKB_DEFAULT_*`, `DUNE_TERMINAL`, `DUNE_MOD`,
 `DUNE_XWAYLAND`.
+
+## Window rules
+
+A `[[rules]]` table tells dune what to do with a new window, by its app id (an X11
+app: its class) and title. Both are regexes, and when a rule has both, both must match.
+`actions` lists tile options (Mod+/) by their key names: `float`, `center`,
+`full_width`, `stack_to_tabs`, `send_to_desk_1` .. `send_to_desk_9`, `dock`,
+`send_to_scratchpad`, `private_tile`, `mute_tile`, `close`.
+
+```toml
+[[rules]]
+app_id = "^pavucontrol$"
+actions = ["float"]
+
+[[rules]]
+title = "Picture-in-Picture"
+actions = ["float", "private_tile"]
+
+[[rules]]
+app_id = "(?i)^steam$"         # (?i): any case
+actions = ["send_to_desk_3"]
+```
+
+Rules run once, when the window first shows. They only apply to a window that gets its
+own tile on the desktop you are looking at. A window that opens as a tab, in a
+terminal's tile or on another desktop stays where it was put. Every matching rule runs,
+in the order of the file. `float` leaves a window that already floats (a dialog)
+floating. An action that sends the tile away (to a desktop, the dock or the
+scratchpad) ends the list. A rule with a bad regex, or with neither `app_id` nor
+`title`, is skipped with a warning, and so is an unknown action. The log names each
+window's app id (`focus ... app=...`), which helps when writing rules.
 
 ## Default keys
 

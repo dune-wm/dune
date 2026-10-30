@@ -172,6 +172,8 @@ pub struct Dune {
     /// takes the place of a window of that process closing right after (see
     /// `REPLACE_WINDOW`).
     pub unclaimed_window: Option<(TileId, u32, std::time::Instant)>,
+    /// New tiles of their own whose window rules run at their first commit.
+    pub pending_rules: crate::rules::PendingRules,
     /// `dune-shell` link given to terminals as `$SHELL`, and the shell it starts.
     pub shell_wrapper: Option<PathBuf>,
     pub user_shell: PathBuf,
@@ -408,6 +410,7 @@ impl Dune {
             launches: HashMap::new(),
             next_launch: 1,
             unclaimed_window: None,
+            pending_rules: Default::default(),
             shell_wrapper: None,
             user_shell: PathBuf::from("/bin/sh"),
 

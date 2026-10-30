@@ -46,6 +46,12 @@
 //! position = [0, 0]           # top-left corner; unset ones go to the right of the rest
 //! [output.DP-1]
 //! off = true                  # leave this monitor dark
+//!
+//! # What new windows get, by app id and title (see `rules.rs`)
+//! [[rules]]
+//! app_id = "^pavucontrol$"    # a regex; `title = "..."` too, both must match
+//! actions = ["float"]         # tile actions by their key names: float, center, full_width,
+//!                             # send_to_desk_N, send_to_scratchpad, dock, private_tile, mute_tile, ...
 //! ```
 //!
 //! A setting dune does not know, or a value that is not one (a key that is not a key, a
@@ -592,6 +598,8 @@ pub struct Config {
     pub recording_dir: String,
     /// Whether recordings start taking the microphone too.
     pub record_audio: bool,
+    /// What new windows get by their app id and title (`[[rules]]`).
+    pub rules: Vec<crate::rules::Rule>,
 }
 
 impl Config {
@@ -657,6 +665,7 @@ struct File {
     output: BTreeMap<String, OutputFile>,
     keys: BTreeMap<String, Keys>,
     spawn: BTreeMap<String, String>,
+    rules: Vec<crate::rules::RuleFile>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -778,6 +787,7 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         screenshot_dir: file.capture.screenshot_dir.clone(),
         recording_dir: file.capture.recording_dir.clone(),
         record_audio: file.capture.record_audio,
+        rules: crate::rules::rules(&file.rules),
     }
 }
 
