@@ -1179,7 +1179,7 @@ impl Dune {
                 return Some("ok".into());
             }
             // The listener keeps the connection (`ipc::listen`).
-            Request::WatchScratchpad | Request::WatchRecording | Request::WatchDock { .. } => {}
+            Request::WatchScratchpad | Request::WatchRecording | Request::WatchDock { .. } | Request::Subscribe { .. } => {}
             Request::Keys(keys) => {
                 if std::env::var("DUNE_DEBUG").as_deref() != Ok("1") {
                     tracing::warn!("ignoring key injection: DUNE_DEBUG=1 is not set");

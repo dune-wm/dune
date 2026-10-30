@@ -43,6 +43,9 @@
 //! - `watch_recording\t` — the connection stays open: dune writes `on SECONDS` (when the
 //!   recording started, since the epoch) or `off`, followed by ` mic` while the microphone is
 //!   recorded, now and on every change;
+//! - `subscribe\t<kinds>` — the connection stays open: dune writes a JSON line for every
+//!   change of the kinds asked for (`window,desktop,output`, comma separated; empty: all),
+//!   starting with the state now as changes (`dune events`).
 
 use std::{
     io::{Read, Write},
@@ -490,6 +493,8 @@ pub enum Request {
     RecordingMenu,
     /// Keep the connection, writing whether a recording runs on every change.
     WatchRecording,
+    /// Keep the connection, writing a JSON line for each change of `kinds` (empty: all).
+    Subscribe { kinds: Vec<String> },
 }
 
 impl Request {
@@ -551,6 +556,7 @@ impl Request {
             Request::RecordingState => "recording_state\t".into(),
             Request::RecordingMenu => "recording_menu\t".into(),
             Request::WatchRecording => "watch_recording\t".into(),
+            Request::Subscribe { kinds } => format!("subscribe\t{}", kinds.join(",")),
         }
     }
 
@@ -630,6 +636,9 @@ impl Request {
             "recording_state" => Some(Request::RecordingState),
             "recording_menu" => Some(Request::RecordingMenu),
             "watch_recording" => Some(Request::WatchRecording),
+            "subscribe" => Some(Request::Subscribe {
+                kinds: rest.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
+            }),
             _ => None,
         }
     }
@@ -760,6 +769,8 @@ mod tests {
             Request::RecordingState,
             Request::RecordingMenu,
             Request::WatchRecording,
+            Request::Subscribe { kinds: vec![] },
+            Request::Subscribe { kinds: vec!["window".into(), "desktop".into()] },
         ];
         assert_eq!(Request::decode("recording_toggle\twindow"), None);
         for req in reqs {

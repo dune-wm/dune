@@ -399,6 +399,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_ignored",
+ "serde_json",
  "smithay",
  "smithay-drm-extras",
  "toml",

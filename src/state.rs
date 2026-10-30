@@ -145,6 +145,9 @@ pub struct Dune {
     pub scratch_shown: HashSet<TileId>,
     /// `dune scratchpad watch` connections, and the last line they were sent.
     pub scratchpad_watchers: Vec<std::os::unix::net::UnixStream>,
+    /// `subscribe` connections (`crate::events`), and what they were told last.
+    pub subscribers: Vec<crate::events::Subscriber>,
+    pub last_snapshot: crate::events::Snapshot,
     pub scratchpad_status: String,
     /// Tiles put away in the docks of the desktops, oldest first (`crate::dock`).
     pub dock: Vec<crate::dock::Docked>,
@@ -406,6 +409,8 @@ impl Dune {
             scratch_shown: HashSet::new(),
             swallows: HashMap::new(),
             scratchpad_watchers: Vec::new(),
+            subscribers: Vec::new(),
+            last_snapshot: Default::default(),
             scratchpad_status: String::new(),
             dock: Vec::new(),
             dock_pins: HashSet::new(),

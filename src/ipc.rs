@@ -28,6 +28,7 @@ pub fn listen(event_loop: &mut EventLoop<'static, Dune>, path: &Path) -> std::io
                     Some(Request::WatchScratchpad) => state.watch_scratchpad(stream),
                     Some(Request::WatchRecording) => state.watch_recording(stream),
                     Some(Request::WatchDock { output }) => state.watch_dock(stream, output),
+                    Some(Request::Subscribe { kinds }) => state.subscribe(stream, &kinds),
                     Some(req) => {
                         if let Some(answer) = state.handle_request(req) {
                             let _ = stream.write_all(answer.as_bytes());

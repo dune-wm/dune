@@ -271,7 +271,7 @@ mod tests {
     fn the_windows_of_locked_desktops_are_listed_only_when_asked() {
         let mut p = Privacy::default();
         assert_eq!(p.listed_desks("DP-1", false), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        assert_eq!(p.listed_desks("DP-1", true), []);
+        assert!(p.listed_desks("DP-1", true).is_empty());
         p.toggle_lock("DP-1", 2);
         p.toggle_lock("HDMI-A-1", 1);
         assert_eq!(p.listed_desks("DP-1", false), [1, 3, 4, 5, 6, 7, 8, 9]);

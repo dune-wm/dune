@@ -5,6 +5,7 @@ mod config;
 mod cursor;
 mod desktops;
 mod dock;
+mod events;
 mod floating;
 mod gamma;
 mod handlers;
@@ -54,6 +55,7 @@ usage:
   dune recording audio                   turn recording the microphone on or off
   dune recording stop|watch              stop the recording running / print a waybar JSON line
                                          on every change (with the time recorded)
+  dune events [window,desktop,output]    print a JSON line for every change, until dune goes away
   dune shell                             run the dune layer around $DUNE_USER_SHELL (what tiles run)";
 
 fn main() {
@@ -76,6 +78,7 @@ fn main() {
         Some("scratchpad") => ipc::scratchpad_command(&args[1..]),
         Some("dock") => ipc::dock_command(&args[1..]),
         Some("recording") => ipc::recording_command(&args[1..]),
+        Some("events") => events::events_command(&args[1..]),
         Some("shell") => shell::run(shell::ARGV0, args[1..].iter().map(Into::into).collect()),
         Some("-h") | Some("--help") => {
             println!("{USAGE}");
@@ -190,6 +193,7 @@ fn run(mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
 
     event_loop.run(None, &mut state, |state| {
         state.refresh_pointer_focus();
+        state.send_events();
     })?;
 
     let _ = std::fs::remove_file(&socket);

@@ -46,6 +46,23 @@ dune recording menu                      # the recording panel, or stop the reco
 dune recording region | tile | screen     # record that, or stop the recording running
 dune recording audio                     # turn recording the microphone on or off
 dune recording stop | watch
+dune events [window,desktop,output]      # a JSON line per change, until dune goes away
 ```
 
 The control socket is `$DUNE_SOCKET`; the protocol lives in `dune-common/src/protocol.rs`.
+
+`dune events` is for scripts and bars that follow dune, like sway's `subscribe`. It
+starts with the current state, written as changes, then writes one JSON line for each
+change:
+
+```text
+{"event":"window","change":"new","tile":3,"app_id":"foot","title":"~","place":"desk 1"}
+{"event":"window","change":"focus","tile":3,"app_id":"foot","title":"~","place":"desk 1"}
+{"event":"desktop","change":"focus","output":"DP-1","desk":2}
+{"event":"output","change":"added","output":"HDMI-A-1"}
+```
+
+The window changes are `new`, `title`, `move` (another desktop, the dock, the
+scratchpad), `focus` and `close`. Windows on locked desktops are left out, and private
+tiles go by their masked title. For example, `dune events window | jq -r 'select(.change
+== "focus") | .title'` prints the title of every window that takes focus.
