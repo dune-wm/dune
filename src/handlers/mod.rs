@@ -257,3 +257,50 @@ impl TabletSeatHandler for Dune {
 }
 
 smithay::delegate_dispatch2!(Dune);
+
+//
+// Keyboard shortcuts inhibit
+//
+
+use smithay::wayland::keyboard_shortcuts_inhibit::{
+    KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor,
+    KeyboardShortcutsInhibitorSeat,
+};
+
+// A window that asks for every key gets them while it has the keyboard, like in sway;
+// `shortcuts_inhibit` (Mod+Shift+Escape) takes them back.
+impl KeyboardShortcutsInhibitHandler for Dune {
+    fn keyboard_shortcuts_inhibit_state(&mut self) -> &mut KeyboardShortcutsInhibitState {
+        &mut self.shortcuts_inhibit_state
+    }
+
+    fn new_inhibitor(&mut self, inhibitor: KeyboardShortcutsInhibitor) {
+        tracing::info!("a window takes every key ({} gives them back)", self.config.key_label(crate::config::Binding::ShortcutsInhibit));
+        inhibitor.activate();
+    }
+}
+
+impl Dune {
+    /// The inhibitor of the surface with the keyboard, if it has one.
+    fn focused_inhibitor(&self) -> Option<KeyboardShortcutsInhibitor> {
+        let focus = self.seat.get_keyboard()?.current_focus()?;
+        self.seat.keyboard_shortcuts_inhibitor_for_surface(&focus)
+    }
+
+    /// Whether the window with the keyboard holds every key now.
+    pub fn shortcuts_inhibited(&self) -> bool {
+        self.focused_inhibitor().is_some_and(|i| i.is_active())
+    }
+
+    /// The focused window's hold on every key off, or back on.
+    pub fn toggle_shortcuts_inhibit(&mut self) {
+        let Some(inhibitor) = self.focused_inhibitor() else { return };
+        if inhibitor.is_active() {
+            tracing::info!("compositor keys back from the focused window");
+            inhibitor.inactivate();
+        } else {
+            tracing::info!("the focused window takes every key again");
+            inhibitor.activate();
+        }
+    }
+}

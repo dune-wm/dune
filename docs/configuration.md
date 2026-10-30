@@ -161,6 +161,7 @@ window's app id (`focus ... app=...`), which helps when writing rules.
 | `terminal_tab` | none | terminal as a tab |
 | `stack_to_tabs` | `Mod+t` | stack to tabs |
 | `lock` | `Mod+Escape` | lock |
+| `shortcuts_inhibit` | `Mod+Shift+Escape` | take dune's keys back from a window holding every key (again: give them) |
 | `dock_show` | `Mod+Shift+e` | the dock of the active monitor, by keys |
 | `quit` | none | end the session at once (Log out: dune-finder's System mode) |
 | `screenshot` / `_tile` / `_screen` | `Print` / `Ctrl+Print` / `Shift+Print` | screenshot region / tile / monitor |

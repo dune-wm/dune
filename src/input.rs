@@ -92,6 +92,8 @@ enum Action {
     SendToDesk(u8),
     /// Mod+Escape: run `lock_command` (swaylock).
     Lock,
+    /// Mod+Shift+Escape: the focused window's hold on every key off (again: on).
+    ShortcutsInhibit,
     /// Print / Ctrl+Print / Shift+Print: a screenshot of a region chosen with the mouse,
     /// of the focused tile, of the active monitor.
     Screenshot(Capture),
@@ -142,6 +144,7 @@ impl From<Binding> for Action {
             Binding::StackToTabs => Action::StackToTabs,
             Binding::Quit => Action::Quit,
             Binding::Lock => Action::Lock,
+            Binding::ShortcutsInhibit => Action::ShortcutsInhibit,
             Binding::Screenshot => Action::Screenshot(Capture::Region),
             Binding::ScreenshotTile => Action::Screenshot(Capture::Tile),
             Binding::ScreenshotScreen => Action::Screenshot(Capture::Screen),
@@ -225,6 +228,12 @@ fn action_for(config: &Config, mods: &ModifiersState, sym: Keysym) -> Option<Act
 /// the lock surface.
 fn allowed_while_locked(action: &Action) -> bool {
     matches!(action, Action::SwitchVt(_))
+}
+
+/// While the focused window holds every key (a VM, a remote desktop): the keys dune keeps,
+/// the one that takes them back among them.
+fn allowed_while_inhibited(action: &Action) -> bool {
+    matches!(action, Action::SwitchVt(_) | Action::ShortcutsInhibit | Action::Lock)
 }
 
 /// The closest point to `pos` inside one of `outputs` (pointer motion stays on the screens).
@@ -616,6 +625,7 @@ impl Dune {
             Action::Desk(n) => self.show_desk(n),
             Action::SendToDesk(n) => self.send_to_desk(n),
             Action::Lock => crate::autostart(&self.config.lock_command),
+            Action::ShortcutsInhibit => self.toggle_shortcuts_inhibit(),
             Action::Screenshot(what) => self.screenshot(what),
             Action::Record(what) => self.toggle_recording(what),
             Action::Spawn(n) => {
@@ -650,6 +660,7 @@ impl Dune {
         // While dune-finder is open, Mod+Enter is its own (files: the file manager).
         let finder_open = self.finder.is_some();
         let locked = self.session_lock.is_locked();
+        let inhibited = self.shortcuts_inhibited();
         // The dock shown for the keys takes them: its own (`dock_key`), and the compositor's
         // bindings (which hide it first); nothing else reaches the windows meanwhile.
         let dock_keys = self.dock_keys && self.dock_open.is_some() && !locked;
@@ -673,6 +684,7 @@ impl Dune {
                 // While dune-finder is open, Mod+Enter and Mod+Tab are its own.
                 Some(Action::EmptyContainer | Action::CycleTab(_)) if finder_open => FilterResult::Forward,
                 Some(action) if locked && !allowed_while_locked(&action) => FilterResult::Forward,
+                Some(action) if inhibited && !allowed_while_inhibited(&action) => FilterResult::Forward,
                 Some(action) if pressed => FilterResult::Intercept(action),
                 _ => FilterResult::Forward,
             },

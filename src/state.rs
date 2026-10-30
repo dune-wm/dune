@@ -197,6 +197,7 @@ pub struct Dune {
 
     pub layer_shell_state: WlrLayerShellState,
     pub viewporter_state: ViewporterState,
+    pub shortcuts_inhibit_state: smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
     pub fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
     pub cursor_shape_state: CursorShapeManagerState,
     /// A layer (dune-finder, a launcher) that asked for the keyboard; it has it until it closes.
@@ -346,6 +347,9 @@ impl Dune {
         // swayidle: idle timeouts, held off by videos and games; swaylock: the screen lock.
         let idle_notifier_state = smithay::wayland::idle_notify::IdleNotifierState::new(&dh, event_loop.handle());
         smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(&dh);
+        // Virtual machines, remote desktops and games that want every key, Mod ones too.
+        let shortcuts_inhibit_state =
+            smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState::new::<Self>(&dh);
         let session_lock = crate::lock::SessionLock::new(&dh);
 
         let mut seat_state = SeatState::new();
@@ -445,6 +449,7 @@ impl Dune {
             config,
             layer_shell_state,
             viewporter_state,
+            shortcuts_inhibit_state,
             fractional_scale_state,
             cursor_shape_state,
             layer_focus: None,

@@ -122,6 +122,7 @@
 //! stack_to_tabs = "mod+t"
 //! quit = "none"                       # end the session at once (Log out is in dune-finder's System mode)
 //! lock = "mod+Escape"                 # runs `lock_command`
+//! shortcuts_inhibit = "mod+shift+Escape"  # a window that took every key (a VM) gives dune's back (again: lets it)
 //! screenshot = "Print"                # of a region chosen with the mouse (Esc: none)
 //! screenshot_tile = "ctrl+Print"      # of the focused tile
 //! screenshot_screen = "shift+Print"   # of the active monitor
@@ -349,6 +350,8 @@ pub enum Binding {
     StackToTabs,
     Quit,
     Lock,
+    /// Let the focused window have every key, compositor keys too, or take them back.
+    ShortcutsInhibit,
     Screenshot,
     ScreenshotTile,
     ScreenshotScreen,
@@ -415,6 +418,7 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("stack_to_tabs", StackToTabs, "mod+t"),
         ("quit", Quit, "none"),
         ("lock", Lock, "mod+Escape"),
+        ("shortcuts_inhibit", ShortcutsInhibit, "mod+shift+Escape"),
         ("screenshot", Screenshot, "Print"),
         ("screenshot_tile", ScreenshotTile, "ctrl+Print"),
         ("screenshot_screen", ScreenshotScreen, "shift+Print"),
@@ -917,6 +921,11 @@ mod tests {
         assert_eq!((c.outputs["DP-1"].scale, c.outputs["DP-1"].adaptive_sync), (Some(1.25), AdaptiveSync::Fullscreen));
         // Out of range or unknown: the defaults.
         assert_eq!((c.outputs["HDMI-A-1"].scale, c.outputs["HDMI-A-1"].adaptive_sync), (None, AdaptiveSync::Off));
+    }
+
+    #[test]
+    fn shortcuts_inhibit_has_a_key() {
+        assert_eq!(keys_of(&config(""), Binding::ShortcutsInhibit), [spec("alt+shift+Escape")]);
     }
 
     #[test]

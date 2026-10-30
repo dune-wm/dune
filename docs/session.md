@@ -10,6 +10,11 @@ Lock, idle, night light, X11, Waybar and the `dune` command line.
 
 - **Lock**: `Mod+Escape` runs `lock_command` (`swaylock -f`), through `ext-session-lock`.
   While locked only the lock surface is shown and compositor keys are off.
+- **Every key to one window**: a virtual machine, a remote desktop or a game can ask
+  for every key, dune's own too (keyboard-shortcuts-inhibit). It gets them while it has
+  the keyboard. `Mod+Shift+Escape` (`shortcuts_inhibit`) takes dune's keys back, and
+  pressing it again gives them to the window again. That key, `lock` and the VT keys
+  always work.
 - **Adaptive sync** (VRR): `adaptive_sync` in `[output.NAME]`. `"fullscreen"` turns it on
   only while a tile is fullscreen on that monitor (games), so the desktop never flickers.
   A monitor that would need a modeset to switch it is left as it is (logged).
