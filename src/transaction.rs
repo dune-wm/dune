@@ -75,6 +75,13 @@ impl Dune {
     /// theirs, joining the transaction running if there is one. Nothing to wait for: the
     /// layout shows as it is.
     pub fn begin_transaction(&mut self, before: HashMap<TileId, Rect>) {
+        // A Mod+right drag sends a size every motion: a held layout would trail it by a
+        // timeout each time, the tile flickering between its old and new place. The window
+        // follows the pointer as it draws instead.
+        if matches!(self.seatop, crate::seatop::Seatop::Resize(_)) {
+            self.transaction = None;
+            return;
+        }
         let sent: HashMap<TileId, ObjectId> = self
             .geometries
             .iter()
