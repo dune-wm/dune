@@ -879,6 +879,11 @@ impl Layout {
         self.slid = Some(focus);
     }
 
+    /// How far the view has slid along the strip, in pixels, as last laid out.
+    pub fn view(&self) -> i32 {
+        self.view
+    }
+
     /// Let the view follow focus again after a slide by hand.
     pub fn stop_sliding(&mut self) {
         self.slid = None;

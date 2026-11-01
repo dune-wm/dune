@@ -163,6 +163,7 @@ window's app id (`focus ... app=...`), which helps when writing rules.
 | `lock` | `Mod+Escape` | lock |
 | `shortcuts_inhibit` | `Mod+Shift+Escape` | take dune's keys back from a window holding every key (again: give them) |
 | `dock_show` | `Mod+Shift+e` | the dock of the active monitor, by keys |
+| `minimap` | `Mod+a` | dune-shell's minimap of the active monitor (again: hide it), through `dune events` |
 | `quit` | none | end the session at once (Log out: dune-finder's System mode) |
 | `screenshot` / `_tile` / `_screen` | `Print` / `Ctrl+Print` / `Shift+Print` | screenshot region / tile / monitor |
 | `record` / `_tile` / `_screen` | `Mod+Shift+r` / `Mod+Ctrl+r` / `Mod+Ctrl+Shift+r` | record region / tile / monitor |

@@ -25,6 +25,7 @@ mod screencopy;
 mod scratchpad;
 mod screenshot;
 mod shell;
+mod thumbnails;
 mod sound;
 mod state;
 mod tab_title;
@@ -57,7 +58,9 @@ usage:
   dune recording audio                   turn recording the microphone on or off
   dune recording stop|watch              stop the recording running / print a waybar JSON line
                                          on every change (with the time recorded)
-  dune events [window,desktop,output]    print a JSON line for every change, until dune goes away
+  dune events [window,desktop,output,strip,minimap]
+                                         print a JSON line for every change, until dune goes away
+  dune goto TILE                         show that window and focus it
   dune shell                             run the dune layer around $DUNE_USER_SHELL (what tiles run)";
 
 fn main() {
@@ -81,6 +84,7 @@ fn main() {
         Some("dock") => ipc::dock_command(&args[1..]),
         Some("recording") => ipc::recording_command(&args[1..]),
         Some("events") => events::events_command(&args[1..]),
+        Some("goto") => ipc::goto_command(&args[1..]),
         Some("shell") => shell::run(shell::ARGV0, args[1..].iter().map(Into::into).collect()),
         Some("-h") | Some("--help") => {
             println!("{USAGE}");
@@ -122,6 +126,8 @@ fn run(mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
     let socket = ipc::socket_path(&name);
     ipc::listen(&mut event_loop, &socket)?;
     reload::watch(&event_loop.handle());
+    let thumbnails = thumbnails::dir(&socket);
+    thumbnails::watch(&event_loop.handle(), &mut state, thumbnails.clone());
     sound::watch(&event_loop.handle());
 
     state.user_shell = user_shell();
@@ -137,6 +143,8 @@ fn run(mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
         std::env::set_var("DUNE_SOCKET", &socket);
+        // Where the thumbnails of the tiles are (`crate::thumbnails`).
+        std::env::set_var("DUNE_THUMBNAILS", &thumbnails);
         std::env::remove_var("DISPLAY");
         // `dune ...` from a bar or a script finds this binary, even when its folder
         // (e.g. ~/.cargo/bin) is only on the PATH of interactive shells.
@@ -173,7 +181,7 @@ fn run(mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
             std::env::set_var("XDG_CURRENT_DESKTOP", "dune");
             std::env::set_var("XDG_SESSION_TYPE", "wayland");
         }
-        let vars = ["WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "DUNE_SOCKET", "XCURSOR_THEME", "XCURSOR_SIZE"];
+        let vars = ["WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "DUNE_SOCKET", "DUNE_THUMBNAILS", "XCURSOR_THEME", "XCURSOR_SIZE"];
         match std::process::Command::new("dbus-update-activation-environment").arg("--systemd").args(vars).status() {
             Ok(status) if status.success() => {}
             other => tracing::warn!("could not export the session environment to systemd/D-Bus: {other:?}"),

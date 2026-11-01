@@ -29,6 +29,7 @@
 //! screenshot_dir = "~/shots"  # where the `screenshot` keys save; default $XDG_PICTURES_DIR/Screenshots, else ~/Pictures/Screenshots
 //! recording_dir = "~/videos"  # where `record` saves; default $XDG_VIDEOS_DIR, else ~/Videos
 //! record_audio = false        # recordings take the microphone too (`dune recording audio` flips it)
+//! thumbnail_interval = 2      # s between the thumbnails of the tiles kept for shells (`$DUNE_THUMBNAILS`, 0-60, 0 off); default 2
 //!
 //! [mouse]
 //! dock_click = "mod+right"    # the tile under the pointer (with its tabs) into the dock of its desktop; default none
@@ -115,6 +116,7 @@
 //! private_tile = "none"               # block the focused tile on screen and in captures (again: show it)
 //! mute_tile = "none"                  # mute the sound of the focused tile's app (again: unmute it)
 //! dock = "mod+shift+d"                # the focused tile (with its tabs) into the dock of its desktop
+//! minimap = "mod+a"                  # dune-shell's minimap of the active monitor (again: hide it)
 //! dock_show = "mod+shift+e"           # the dock of the active monitor: arrows or k/j, Enter out, p pins, Esc
 //! terminal_vertical = "mod+v"         # a terminal right of the tile, in its folder
 //! terminal_horizontal = "mod+s"       # one below it
@@ -346,6 +348,8 @@ pub enum Binding {
     MuteTile,
     Dock,
     DockShow,
+    /// Ask the bar (dune-shell) to show or hide the minimap of the active monitor.
+    Minimap,
     Terminal(TerminalHere),
     StackToTabs,
     Quit,
@@ -412,6 +416,7 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("mute_tile", MuteTile, "none"),
         ("dock", Dock, "mod+shift+d"),
         ("dock_show", DockShow, "mod+shift+e"),
+        ("minimap", Minimap, "mod+a"),
         ("terminal_vertical", Terminal(TerminalHere::Right), "mod+v"),
         ("terminal_horizontal", Terminal(TerminalHere::Below), "mod+s"),
         ("terminal_tab", Terminal(TerminalHere::Tab), "none"),
@@ -617,6 +622,8 @@ pub struct Config {
     pub recording_dir: String,
     /// Whether recordings start taking the microphone too.
     pub record_audio: bool,
+    /// Seconds between the thumbnails of the tiles (`crate::thumbnails`); 0: none.
+    pub thumbnail_interval: u64,
     /// What new windows get by their app id and title (`[[rules]]`).
     pub rules: Vec<crate::rules::Rule>,
 }
@@ -712,6 +719,7 @@ struct CaptureFile {
     screenshot_dir: String,
     recording_dir: String,
     record_audio: bool,
+    thumbnail_interval: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -808,6 +816,7 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         screenshot_dir: file.capture.screenshot_dir.clone(),
         recording_dir: file.capture.recording_dir.clone(),
         record_audio: file.capture.record_audio,
+        thumbnail_interval: number("capture.thumbnail_interval", file.capture.thumbnail_interval, 2, 0..=60) as u64,
         rules: crate::rules::rules(&file.rules),
     }
 }
@@ -1130,6 +1139,9 @@ mod tests {
         let c = config("[capture]\nscreenshot_dir = \"~/shots\"\nrecording_dir = \"/data/videos\"\n");
         assert_eq!(c.screenshot_dir, "~/shots");
         assert_eq!(c.recording_dir, "/data/videos");
+        assert_eq!(c.thumbnail_interval, 2);
+        assert_eq!(config("[capture]\nthumbnail_interval = 0\n").thumbnail_interval, 0);
+        assert_eq!(config("[capture]\nthumbnail_interval = 600\n").thumbnail_interval, 2);
     }
 
     #[test]

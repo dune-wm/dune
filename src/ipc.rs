@@ -91,6 +91,17 @@ pub fn dock_command(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// `dune goto TILE`: show that window and focus it (a minimap's click).
+pub fn goto_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [tile] => {
+            let tile = tile.parse().map_err(|_| format!("not a tile: `{tile}`"))?;
+            ask(&Request::GoTo { tile }, Duration::from_secs(1)).map(|_| ())
+        }
+        _ => Err("usage: dune goto TILE".into()),
+    }
+}
+
 /// `dune recording stop`: stop the recording running. `dune recording region|tile|screen`:
 /// record that, or stop the recording running (a bar's button). `dune recording audio`: turn
 /// recording the microphone on or off (scrolling on the button). `dune recording menu`: stop the

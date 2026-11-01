@@ -121,6 +121,8 @@ pub struct Dune {
     /// `subscribe` connections (`crate::events`), and what they were told last.
     pub subscribers: Vec<crate::events::Subscriber>,
     pub last_snapshot: crate::events::Snapshot,
+    /// Events asked for by keys meant for the bar (`minimap`), sent after this turn.
+    pub asked_events: Vec<crate::events::Event>,
     pub scratchpad_status: String,
     /// Tiles put away in the docks of the desktops, oldest first (`crate::dock`).
     pub dock: Vec<crate::dock::Docked>,
@@ -189,6 +191,8 @@ pub struct Dune {
     pub activation_state: smithay::wayland::xdg_activation::XdgActivationState,
     pub capture_sessions: Vec<smithay::wayland::image_copy_capture::Session>,
     pub pending_captures: Vec<crate::screencopy::PendingCapture>,
+    /// The thumbnails of the tiles kept for shells (`crate::thumbnails`).
+    pub thumbnails: crate::thumbnails::Thumbnails,
     /// wlr-screencopy (wf-recorder): its frames waiting for something new, see
     /// `crate::wlr_screencopy`.
     pub wlr_screencopy: crate::wlr_screencopy::WlrScreencopy,
@@ -384,6 +388,7 @@ impl Dune {
             scratchpad_watchers: Vec::new(),
             subscribers: Vec::new(),
             last_snapshot: Default::default(),
+            asked_events: Vec::new(),
             scratchpad_status: String::new(),
             dock: Vec::new(),
             dock_pins: HashSet::new(),
@@ -437,6 +442,7 @@ impl Dune {
             activation_state,
             capture_sessions: Vec::new(),
             pending_captures: Vec::new(),
+            thumbnails: Default::default(),
             wlr_screencopy,
             backend: Backend::None,
             decorations: Default::default(),

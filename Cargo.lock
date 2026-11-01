@@ -396,6 +396,7 @@ dependencies = [
  "glam",
  "libc",
  "nix",
+ "png",
  "regex",
  "serde",
  "serde_ignored",

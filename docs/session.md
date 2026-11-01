@@ -46,7 +46,8 @@ dune recording menu                      # the recording panel, or stop the reco
 dune recording region | tile | screen     # record that, or stop the recording running
 dune recording audio                     # turn recording the microphone on or off
 dune recording stop | watch
-dune events [window,desktop,output]      # a JSON line per change, until dune goes away
+dune events [window,desktop,output,strip,minimap]  # a JSON line per change, until dune goes away
+dune goto TILE                           # show that window and focus it
 ```
 
 The control socket is `$DUNE_SOCKET`; the protocol lives in `dune-common/src/protocol.rs`.
@@ -60,9 +61,26 @@ change:
 {"event":"window","change":"focus","tile":3,"app_id":"foot","title":"~","place":"desk 1"}
 {"event":"desktop","change":"focus","output":"DP-1","desk":2}
 {"event":"output","change":"added","output":"HDMI-A-1"}
+{"event":"strip","change":"layout","output":"HDMI-A-1","view":0,"width":2560,"height":1080,"tiles":[{"tile":3,"x":8,"y":8,"w":1268,"h":1064}]}
+{"event":"minimap","change":"toggle","output":"HDMI-A-1"}
 ```
+
+`minimap` is not a change but a key (`minimap` in `[keys]`, `Mod+a`): dune-shell shows
+or hides the minimap of that monitor (the active one, under the pointer).
 
 The window changes are `new`, `title`, `move` (another desktop, the dock, the
 scratchpad), `focus` and `close`. Windows on locked desktops are left out, and private
 tiles go by their masked title. For example, `dune events window | jq -r 'select(.change
 == "focus") | .title'` prints the title of every window that takes focus.
+
+A `strip` line tells the strip of tiles a monitor shows whenever it changes (a tile
+opens, closes or resizes, the view slides): each tile's rectangle along the strip and
+the part on screen, from `view` to `view + width`. With `dune goto TILE` it is what a
+minimap needs.
+
+dune also keeps a thumbnail of every tile for it: `$DUNE_THUMBNAILS/TILE.png` (in
+`$XDG_RUNTIME_DIR`), at most 360 px on its longer side, redrawn every
+`[capture] thumbnail_interval` seconds (default 2, 0 turns them off) for the windows
+that changed. Like the events, private windows and those of locked desktops get none,
+and a tile's file is removed when the tile goes. Files are renamed into place, so a
+reader never sees half of one.

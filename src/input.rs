@@ -74,6 +74,8 @@ enum Action {
     Dock,
     /// Mod+Shift+e: the dock of the focused tile's monitor, driven by keys (again: hide it).
     DockShow,
+    /// Mod+a: dune-shell's minimap of the active monitor, through `dune events`.
+    Minimap,
     /// A key on the dock shown for the keys.
     DockKey(crate::dock::DockKey),
     /// Mod+v / Mod+s / Mod+Shift+t: a terminal to the right of the focused tile, below it
@@ -141,6 +143,7 @@ impl From<Binding> for Action {
             Binding::MuteTile => Action::MuteTile,
             Binding::Dock => Action::Dock,
             Binding::DockShow => Action::DockShow,
+            Binding::Minimap => Action::Minimap,
             Binding::Terminal(here) => Action::Terminal(here),
             Binding::StackToTabs => Action::StackToTabs,
             Binding::Quit => Action::Quit,
@@ -318,6 +321,14 @@ mod tests {
         let alt_shift = ModifiersState { alt: true, shift: true, ..Default::default() };
         assert!(matches!(action_for(&config, &alt_shift, Keysym::e), Some(Action::DockShow)));
         assert!(!allowed(&alt_shift, Keysym::e));
+    }
+
+    #[test]
+    fn mod_a_is_the_minimap() {
+        let config = test_config("alt");
+        let alt = ModifiersState { alt: true, ..Default::default() };
+        assert!(matches!(action_for(&config, &alt, Keysym::a), Some(Action::Minimap)));
+        assert!(!allowed_while_locked(&Action::Minimap));
     }
 
     #[test]
@@ -555,6 +566,7 @@ impl Dune {
                 }
             }
             Action::DockShow => self.toggle_dock_keys(None),
+            Action::Minimap => self.ask_minimap(),
             Action::DockKey(key) => self.press_dock_key(key),
             Action::Focus(dir) => self.focus_direction(dir),
             Action::FocusMonitor(dir) => self.focus_output_direction(dir),
