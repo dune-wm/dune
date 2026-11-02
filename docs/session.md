@@ -15,6 +15,10 @@ Lock, idle, night light, X11, Waybar and the `dune` command line.
   the keyboard. `Mod+Shift+Escape` (`shortcuts_inhibit`) takes dune's keys back, and
   pressing it again gives them to the window again. That key, `lock` and the VT keys
   always work.
+- **Accessibility**: with [dune-a11y](../../dune-a11y) installed, `dune-session` runs
+  `dune-a11y enable` before dune, so every app shows its accessibility tree (for
+  dune-voice's `click save` and dune-eye-tracker landing on buttons). An app started
+  before it was on shows nothing until it is restarted.
 - **Adaptive sync** (VRR): `adaptive_sync` in `[output.NAME]`. `"fullscreen"` turns it on
   only while a tile is fullscreen on that monitor (games), so the desktop never flickers.
   A monitor that would need a modeset to switch it is left as it is (logged).
