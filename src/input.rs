@@ -753,11 +753,15 @@ impl Dune {
                 pointer.frame(self);
             }
             PointerOp::Where => {
-                let output = (self.space.outputs())
-                    .find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(here)))
-                    .map(|o| o.name())
-                    .unwrap_or_default();
-                return format!("{} {} {output}", here.x.round(), here.y.round());
+                // From the monitor's corner, as `move X Y OUTPUT` takes it and `dune events
+                // pointer` tells it (the layout's when it is on none).
+                let on = (self.space.outputs())
+                    .find_map(|o| self.space.output_geometry(o).filter(|g| g.to_f64().contains(here)).map(|g| (o.name(), g.loc.to_f64())));
+                let (output, at) = match on {
+                    Some((name, corner)) => (name, here - corner),
+                    None => (String::new(), here),
+                };
+                return format!("{} {} {output}", at.x.round(), at.y.round());
             }
         }
         "ok".into()

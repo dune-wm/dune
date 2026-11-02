@@ -59,7 +59,7 @@ dune pointer move X Y [OUTPUT]           # the pointer there (from OUTPUT's corn
 dune pointer by DX DY                    # the pointer moved by that much (on against a side edge: the strip slides, as a mouse pushing it)
 dune pointer scroll DY                   # the window under the pointer scrolled DY px (down when positive), as a touchpad
 dune pointer click|press|release [left|right|middle]  # a button, as a mouse would (left by default)
-dune pointer where                       # where the pointer is: x y output
+dune pointer where                       # where the pointer is: x y output (from its corner, as move takes it)
 dune find [--pick] [apps|windows|files] TEXT  # dune-finder with TEXT typed in (--pick: its first row)
 ```
 
