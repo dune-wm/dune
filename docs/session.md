@@ -106,6 +106,13 @@ scratchpad), `focus` and `close`. Windows on locked desktops are left out, and p
 tiles go by their masked title. For example, `dune events window | jq -r 'select(.change
 == "focus") | .title'` prints the title of every window that takes focus.
 
+A `pointer` `click` line is a mouse button (left, right, middle) going down, `x` `y` from
+the monitor's corner. On a tile (a float too) it also says which (`tile`, `app_id`), where
+in it (`tile_x`, `tile_y`, from its corner) and its size (`tile_w`, `tile_h`): a button
+keeps its place in its window while the strip slides, and dune-eye-tracker learns from
+that. Tiles of locked desktops say none. A `move` line is the mouse moving the pointer
+(not `dune pointer`), a few times a second at most.
+
 A `strip` line tells the strip of tiles a monitor shows whenever it changes (a tile
 opens, closes or resizes, the view slides): each tile's rectangle along the strip and
 the part on screen, from `view` to `view + width`. With `dune goto TILE` it is what a

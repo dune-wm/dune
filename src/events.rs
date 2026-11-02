@@ -20,7 +20,7 @@
 //! {"event":"dock","change":"entries","output":"DP-1","entries":[{"tile":3,"app_id":"foot","title":"vim","pinned":false,"tabs":[],"sound":false}],"scratchpad":[{"tile":7,"app_id":"foot","title":"~","sound":false}]}
 //! {"event":"dock","change":"toggle","output":"DP-1"}
 //! {"event":"mod","change":"start"}
-//! {"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1"}
+//! {"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}
 //! ```
 
 use std::{
@@ -85,6 +85,18 @@ pub struct Strip {
     pub width: i32,
     pub height: i32,
     pub tiles: Vec<Placed>,
+}
+
+/// The tile a click landed on (dune-eye-tracker learns where clicks go inside each app's
+/// window, which stays put while the strip slides).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OnTile {
+    pub tile: TileId,
+    pub app_id: String,
+    pub tile_x: i32,
+    pub tile_y: i32,
+    pub tile_w: i32,
+    pub tile_h: i32,
 }
 
 /// A tile's rectangle in its strip.
@@ -198,6 +210,10 @@ pub enum Event {
         x: i32,
         y: i32,
         output: String,
+        /// A click on a tile: which, its app, where in it (from its top-left corner) and its
+        /// size, all logical pixels. None for `move`, off any tile, or on a locked desk.
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        on: Option<OnTile>,
     },
 }
 
@@ -389,7 +405,26 @@ impl Dune {
         let Some(output) = self.space.outputs().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(pos))) else { return };
         let Some(geo) = self.space.output_geometry(output) else { return };
         let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
-        self.asked_events.push(Event::Pointer { change: "click", button: name, x, y, output: output.name() });
+        let on = self.on_tile(pos);
+        self.asked_events.push(Event::Pointer { change: "click", button: name, x, y, output: output.name(), on });
+    }
+
+    /// The tile at `pos` (layout coordinates) and where in it, for a click's event: a tile
+    /// listed to subscribers (not on a locked desk), floats too.
+    fn on_tile(&self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) -> Option<OnTile> {
+        let tile = self.tab_at(pos.x, pos.y).or_else(|| self.tile_at(pos.x, pos.y))?;
+        let rect = self.shown.iter().find(|(t, _)| *t == tile).map(|(_, r)| *r)?;
+        if !self.window_list(false).iter().any(|w| w.tile == tile) {
+            return None;
+        }
+        Some(OnTile {
+            tile,
+            app_id: self.tile_app_id(tile).unwrap_or_default(),
+            tile_x: (pos.x - rect.x as f64).round() as i32,
+            tile_y: (pos.y - rect.y as f64).round() as i32,
+            tile_w: rect.w,
+            tile_h: rect.h,
+        })
     }
 
     /// The mouse (or touchpad) moved the pointer to `pos`, not `dune pointer`: subscribers of
@@ -407,7 +442,7 @@ impl Dune {
         let Some(geo) = self.space.output_geometry(output) else { return };
         let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
         self.told_motion = Some(now);
-        self.asked_events.push(Event::Pointer { change: "move", button: "", x, y, output: output.name() });
+        self.asked_events.push(Event::Pointer { change: "move", button: "", x, y, output: output.name(), on: None });
     }
 
     pub fn ask_minimap(&mut self) {
@@ -474,7 +509,7 @@ mod tests {
                 Event::Dock { change, output, dock } => format!("dock {change} {output} {}", dock.entries.len()),
                 Event::DockToggle { change, output } => format!("dock {change} {output}"),
                 Event::Mod { change, keys } => format!("mod {change} {keys}"),
-                Event::Pointer { change, button, x, y, output } => format!("pointer {change} {button} {x} {y} {output}"),
+                Event::Pointer { change, button, x, y, output, .. } => format!("pointer {change} {button} {x} {y} {output}"),
             })
             .collect()
     }
@@ -565,13 +600,19 @@ mod tests {
             serde_json::to_string(&event).unwrap(),
             r#"{"event":"window","change":"new","tile":3,"app_id":"foot","title":"a \"b\"","place":"desk 1"}"#
         );
-        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into() };
+        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into(), on: None };
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
             r#"{"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1"}"#
         );
+        let on = OnTile { tile: 3, app_id: "foot".into(), tile_x: 200, tile_y: 96, tile_w: 1268, tile_h: 1064 };
+        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into(), on: Some(on) };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}"#
+        );
         assert_eq!(Kind::parse("pointer"), Some(Kind::Pointer));
-        let event = Event::Pointer { change: "move", button: "", x: 5, y: 6, output: "DP-1".into() };
+        let event = Event::Pointer { change: "move", button: "", x: 5, y: 6, output: "DP-1".into(), on: None };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"pointer","change":"move","x":5,"y":6,"output":"DP-1"}"#);
         let event = Event::Desktop { change: "focus", output: "DP-1".into(), desk: 2 };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"desktop","change":"focus","output":"DP-1","desk":2}"#);
