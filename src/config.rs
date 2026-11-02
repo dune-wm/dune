@@ -11,6 +11,10 @@
 //! xwayland = "satellite"      # X11 apps through xwayland-satellite, or "off"
 //! font = "JetBrains Mono"     # tab titles; default monospace
 //! border_color = "#ffffff"    # border of tiles without focus: #RRGGBB or #RRGGBBAA, or "none"; default white
+//! focus_color = "#5c9ef2"     # border of the focused tile (and Mod+click edges), the same way; default #5c9ef2
+//! background_color = "#14141a"  # behind the tiles, #RRGGBB; default #14141a
+//! border_width = 1            # px of the tile borders (0-16), also between tiles of a column; default 1
+//! gap = 6                     # px around and between columns (0-64); default 6
 //! corner_radius = 8           # px the corners of tiles are rounded by (0-64); default 0, square
 //! exec = ["waybar", "mako"]   # run when dune starts, in order
 //!
@@ -24,6 +28,18 @@
 //! [tabs]
 //! min_width = 200             # px a tab shrinks to before its bar scrolls; default 200
 //! max_width = 220             # px a tab grows to while there is room; default 220
+//! height = 24                 # px of a tab bar (16-64); default 24
+//! font_size = 14              # px of the tab titles (8-32); default 14
+//! background = "#1e2029"      # behind the tabs, #RRGGBB
+//! active = "#4c566a"          # the shown tab
+//! text = "#d8dce6"            # the shown tab's title
+//! inactive_text = "#9096a4"   # the other titles and the "+"
+//!
+//! [animations]
+//! enabled = true              # false: resizes and closes are instant; default true
+//! resize_ms = 150             # ms a resize slides for (0-1000, 0 none); default 150
+//! close_ms = 150              # ms a closing tile shrinks and fades for (0-1000, 0 none); default 150
+//! close_scale = 0.85          # how big a closing tile ends, as a share of its size (0.5-1.0); default 0.85
 //!
 //! [capture]
 //! screenshot_dir = "~/shots"  # where the `screenshot` keys save; default $XDG_PICTURES_DIR/Screenshots, else ~/Pictures/Screenshots
@@ -54,7 +70,7 @@
 //! [[rules]]
 //! app_id = "^pavucontrol$"    # a regex; `title = "..."` too, both must match
 //! actions = ["float"]         # tile actions by their key names: float, center, full_width,
-//!                             # send_to_desk_N, send_to_scratchpad, dock, private_tile, mute_tile, ...
+//!                             # send_to_desk_N, send_to_scratchpad, dock, private_tile, mute_tile, sticky, ...
 //! ```
 //!
 //! A setting dune does not know, or a value that is not one (a key that is not a key, a
@@ -89,6 +105,8 @@
 //! focus_monitor_down = "none"         # with those keys taken out of focus_up / focus_down)
 //! focus_monitor_up = "none"
 //! focus_monitor_right = "none"
+//! focus_monitor_next = "none"         # the next monitor, top to bottom and left to right, then the first
+//! move_monitor_next = "none"          # the focused tile to that next monitor
 //! desk_1 = "mod+1"                    # show that desktop (desk_1 .. desk_9: mod+1 .. mod+9)
 //! send_to_desk_1 = "mod+shift+1"      # send the tile there (send_to_desk_1 .. _9: mod+shift+1 .. 9)
 //! empty_container = "mod+Return"      # an empty container, dune-finder to fill it
@@ -115,12 +133,15 @@
 //! switcher = "none"                   # dune-finder on the windows (`/` in it gets there too)
 //! private_tile = "none"               # block the focused tile on screen and in captures (again: show it)
 //! mute_tile = "none"                  # mute the sound of the focused tile's app (again: unmute it)
+//! sticky = "none"                     # the focused tile floats in front of all, on every desktop (again: off)
 //! dock = "mod+shift+d"                # the focused tile (with its tabs) into the dock of its desktop
 //! minimap = "mod+a"                  # dune-shell's minimap of the active monitor (again: hide it)
-//! dock_show = "mod+shift+e"           # the dock of the active monitor: arrows or k/j, Enter out, p pins, Esc
+//! dock_show = "mod+shift+e"           # dune-shell shows the dock of the active monitor (again: hides it)
 //! terminal_vertical = "mod+v"         # a terminal right of the tile, in its folder
 //! terminal_horizontal = "mod+s"       # one below it
 //! terminal_tab = "none"               # one as a new tab of its container
+//! terminal_left = "none"              # one left of it
+//! terminal_above = "none"             # one above it
 //! stack_to_tabs = "mod+t"
 //! quit = "none"                       # end the session at once (Log out is in dune-finder's System mode)
 //! lock = "mod+Escape"                 # runs `lock_command`
@@ -143,7 +164,7 @@
 //!
 //! The pointer pushing on against the left or right edge of the screens slides the strip
 //! that way; it stays there until focus moves. A mark at the middle of an edge (`‹3`, `2›`)
-//! tells how many tiles are past it.
+//! tells how many tiles are past it, in white.
 //!
 //! dune-finder (a program of its own, installed next to dune) is the launcher and the
 //! window list: Mod+d shows the apps, `/` typed first in them turns it into every window
@@ -320,6 +341,8 @@ pub enum Binding {
     Swap(Direction),
     MoveTab(Direction),
     FocusMonitor(Direction),
+    FocusMonitorNext,
+    MoveMonitorNext,
     Desk(u8),
     SendToDesk(u8),
     EmptyContainer,
@@ -346,6 +369,7 @@ pub enum Binding {
     Switcher,
     PrivateTile,
     MuteTile,
+    Sticky,
     Dock,
     DockShow,
     /// Ask the bar (dune-shell) to show or hide the minimap of the active monitor.
@@ -387,6 +411,8 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         }
     }
     table.extend(sides.map(|(side, dir, _, _)| (format!("focus_monitor_{side}"), FocusMonitor(dir), "none".to_string())));
+    table.push(("focus_monitor_next".to_string(), FocusMonitorNext, "none".to_string()));
+    table.push(("move_monitor_next".to_string(), MoveMonitorNext, "none".to_string()));
     table.extend((1..=9).map(|n| (format!("desk_{n}"), Desk(n), format!("mod+{n}"))));
     table.extend((1..=9).map(|n| (format!("send_to_desk_{n}"), SendToDesk(n), format!("mod+shift+{n}"))));
     let rest = [
@@ -414,12 +440,15 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("switcher", Switcher, "none"),
         ("private_tile", PrivateTile, "none"),
         ("mute_tile", MuteTile, "none"),
+        ("sticky", Sticky, "none"),
         ("dock", Dock, "mod+shift+d"),
         ("dock_show", DockShow, "mod+shift+e"),
         ("minimap", Minimap, "mod+a"),
         ("terminal_vertical", Terminal(TerminalHere::Right), "mod+v"),
         ("terminal_horizontal", Terminal(TerminalHere::Below), "mod+s"),
         ("terminal_tab", Terminal(TerminalHere::Tab), "none"),
+        ("terminal_left", Terminal(TerminalHere::Left), "none"),
+        ("terminal_above", Terminal(TerminalHere::Above), "none"),
         ("stack_to_tabs", StackToTabs, "mod+t"),
         ("quit", Quit, "none"),
         ("lock", Lock, "mod+Escape"),
@@ -454,6 +483,11 @@ fn keys_of_specs(specs: &[&str], modifier: &str) -> Option<Vec<KeySpec>> {
         return Some(Vec::new());
     }
     specs.iter().map(|spec| KeySpec::parse(spec, modifier)).collect()
+}
+
+/// The binding of that name in `[keys]` (`focus_left`, `desk_3`...), for `dune action`.
+pub fn binding_named(name: &str) -> Option<Binding> {
+    binding_table().into_iter().find(|(n, ..)| n == name).map(|(_, binding, _)| binding)
 }
 
 /// The keys of every binding, in table order: the file's in place of the defaults.
@@ -520,6 +554,8 @@ fn dock_click(value: Option<&str>, modifier: &str) -> Option<ClickSpec> {
 pub enum TerminalHere {
     Right,
     Below,
+    Left,
+    Above,
     Tab,
 }
 
@@ -610,8 +646,20 @@ pub struct Config {
     pub font_family: String,
     /// How narrow and how wide tabs get in their bars.
     pub tab_widths: TabWidths,
+    /// How tall tab bars are, their text size and colors.
+    pub tab_style: crate::tab_title::TabStyle,
+    /// How long resizes and closes animate for, and how a closing tile shrinks.
+    pub animations: Animations,
     /// The border of tiles without focus (premultiplied RGBA); `None`: not drawn.
     pub border_color: Option<[f32; 4]>,
+    /// The border of the focused tile, the same way.
+    pub focus_color: Option<[f32; 4]>,
+    /// What the screens are cleared to behind the tiles (opaque RGBA).
+    pub background_color: [f32; 4],
+    /// Pixels of the tile borders, and between the tiles of a column.
+    pub border_width: i32,
+    /// Pixels around and between columns; the borders are drawn inside it.
+    pub gap: i32,
     /// How many pixels the corners of tiles are rounded by; 0: square.
     pub corner_radius: i32,
     /// Shell commands run when dune starts (`exec`, in order).
@@ -681,10 +729,15 @@ struct File {
     xwayland: Option<String>,
     font: Option<String>,
     border_color: Option<String>,
+    focus_color: Option<String>,
+    background_color: Option<String>,
+    border_width: Option<i64>,
+    gap: Option<i64>,
     corner_radius: Option<i64>,
     exec: Vec<String>,
     keyboard: KeyboardFile,
     tabs: TabsFile,
+    animations: AnimationsFile,
     capture: CaptureFile,
     mouse: MouseFile,
     input: InputConfig,
@@ -708,9 +761,61 @@ struct KeyboardFile {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
+struct AnimationsFile {
+    enabled: Option<bool>,
+    resize_ms: Option<i64>,
+    close_ms: Option<i64>,
+    close_scale: Option<f64>,
+}
+
+/// `[animations]`: a zero duration is no animation (`enabled = false` makes both zero).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Animations {
+    pub resize: std::time::Duration,
+    pub close: std::time::Duration,
+    /// How big a closing tile is by the end, as a share of its size.
+    pub close_scale: f64,
+}
+
+impl Default for Animations {
+    fn default() -> Self {
+        let ms = std::time::Duration::from_millis;
+        Animations { resize: ms(150), close: ms(150), close_scale: 0.85 }
+    }
+}
+
+fn animations(file: &AnimationsFile) -> Animations {
+    let default = Animations::default();
+    let ms = |key: &str, value: Option<i64>, fallback: std::time::Duration| {
+        let n = number(key, value, fallback.as_millis() as i32, 0..=1000);
+        std::time::Duration::from_millis(if file.enabled == Some(false) { 0 } else { n as u64 })
+    };
+    let close_scale = match file.close_scale {
+        Some(v) if (0.5..=1.0).contains(&v) => v,
+        Some(v) => {
+            tracing::warn!("ignoring `animations.close_scale = {v}`: not from 0.5 to 1.0");
+            default.close_scale
+        }
+        None => default.close_scale,
+    };
+    Animations {
+        resize: ms("animations.resize_ms", file.resize_ms, default.resize),
+        close: ms("animations.close_ms", file.close_ms, default.close),
+        close_scale,
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct TabsFile {
     min_width: Option<i64>,
     max_width: Option<i64>,
+    height: Option<i64>,
+    font_size: Option<i64>,
+    background: Option<String>,
+    active: Option<String>,
+    text: Option<String>,
+    inactive_text: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -810,7 +915,14 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         input: input(&file.input),
         font_family: file.font.clone().filter(|f| !f.is_empty()).unwrap_or_else(|| "monospace".into()),
         tab_widths: tab_widths(&file.tabs),
-        border_color: border_color(file.border_color.as_deref()),
+        tab_style: tab_style(&file.tabs),
+        animations: animations(&file.animations),
+        border_color: color("border_color", file.border_color.as_deref(), WHITE),
+        focus_color: color("focus_color", file.focus_color.as_deref(), FOCUS),
+        background_color: color("background_color", file.background_color.as_deref(), BACKGROUND)
+            .map_or(BACKGROUND, |[r, g, b, _]| [r, g, b, 1.0]),
+        border_width: number("border_width", file.border_width, 1, 0..=16),
+        gap: number("gap", file.gap, 6, 0..=64),
         corner_radius: number("corner_radius", file.corner_radius, 0, 0..=64),
         exec: file.exec.iter().filter(|c| !c.trim().is_empty()).cloned().collect(),
         screenshot_dir: file.capture.screenshot_dir.clone(),
@@ -821,11 +933,16 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
     }
 }
 
-/// `border_color`: `#RRGGBB`, `#RRGGBBAA` (the `#` optional) or `none`; white when missing
-/// or not one.
-fn border_color(value: Option<&str>) -> Option<[f32; 4]> {
-    const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-    let Some(value) = value else { return Some(WHITE) };
+const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+/// `focus_color` by default: #5c9ef2.
+pub const FOCUS: [f32; 4] = [0.36, 0.62, 0.95, 1.0];
+/// `background_color` by default: #14141a.
+const BACKGROUND: [f32; 4] = [0.08, 0.08, 0.1, 1.0];
+
+/// A color setting (`key`): `#RRGGBB`, `#RRGGBBAA` (the `#` optional) or `none`;
+/// `default` when missing or not one. Premultiplied, as solid colour buffers take it.
+fn color(key: &str, value: Option<&str>, default: [f32; 4]) -> Option<[f32; 4]> {
+    let Some(value) = value else { return Some(default) };
     if value.eq_ignore_ascii_case("none") {
         return None;
     }
@@ -837,8 +954,8 @@ fn border_color(value: Option<&str>) -> Option<[f32; 4]> {
         _ => None,
     };
     let Some([r, g, b, a]) = rgba.and_then(|v| <[f32; 4]>::try_from(v).ok()) else {
-        tracing::warn!("ignoring `border_color = {value}`: not #RRGGBB, #RRGGBBAA or none");
-        return Some(WHITE);
+        tracing::warn!("ignoring `{key} = {value}`: not #RRGGBB, #RRGGBBAA or none");
+        return Some(default);
     };
     // Solid colour buffers take premultiplied alpha.
     Some([r * a, g * a, b * a, a])
@@ -853,6 +970,24 @@ fn tab_widths(tabs: &TabsFile) -> TabWidths {
         tracing::warn!("`tabs.max_width = {max}` is under `tabs.min_width = {min}`, using {min} for both");
     }
     TabWidths { min, max: max.max(min) }
+}
+
+/// The `[tabs]` look; what is missing or not one keeps its default.
+fn tab_style(tabs: &TabsFile) -> crate::tab_title::TabStyle {
+    let default = crate::tab_title::TabStyle::default();
+    let rgb = |key: &str, value: &Option<String>, fallback: [u8; 3]| {
+        let fallback_f = fallback.map(|c| c as f32 / 255.0);
+        color(key, value.as_deref(), [fallback_f[0], fallback_f[1], fallback_f[2], 1.0])
+            .map_or(fallback, |[r, g, b, _]| [r, g, b].map(|c| (c * 255.0).round() as u8))
+    };
+    crate::tab_title::TabStyle {
+        height: number("tabs.height", tabs.height, default.height, 16..=64),
+        font_size: number("tabs.font_size", tabs.font_size, default.font_size, 8..=32),
+        background: rgb("tabs.background", &tabs.background, default.background),
+        active: rgb("tabs.active", &tabs.active, default.active),
+        text: rgb("tabs.text", &tabs.text, default.text),
+        inactive_text: rgb("tabs.inactive_text", &tabs.inactive_text, default.inactive_text),
+    }
 }
 
 fn number(key: &str, value: Option<i64>, default: i32, range: std::ops::RangeInclusive<i32>) -> i32 {
@@ -988,9 +1123,9 @@ mod tests {
         // private switches (in the tile options), a terminal tab (Mod+Shift+t opens
         // an empty one) and the monitors (their keys depend on how they are placed).
         let c = config("");
-        let unbound = [Binding::Switcher, Binding::PrivateTile, Binding::MuteTile, Binding::Terminal(TerminalHere::Tab), Binding::Quit];
+        let unbound = [Binding::Switcher, Binding::PrivateTile, Binding::MuteTile, Binding::Sticky, Binding::Terminal(TerminalHere::Tab), Binding::Terminal(TerminalHere::Left), Binding::Terminal(TerminalHere::Above), Binding::Quit];
         for (name, binding, defaults) in binding_table() {
-            let none = unbound.contains(&binding) || matches!(binding, Binding::FocusMonitor(_));
+            let none = unbound.contains(&binding) || matches!(binding, Binding::FocusMonitor(_) | Binding::FocusMonitorNext | Binding::MoveMonitorNext);
             assert_eq!(keys_of(&c, binding).is_empty(), none, "{name}");
             assert!(key_list(&defaults, "alt").is_some(), "{name} = {defaults}");
         }
@@ -1105,6 +1240,15 @@ mod tests {
     }
 
     #[test]
+    fn bindings_by_name() {
+        assert_eq!(binding_named("desk_3"), Some(Binding::Desk(3)));
+        assert_eq!(binding_named("focus_left"), Some(Binding::Focus(Direction::Left)));
+        assert_eq!(binding_named("close"), Some(Binding::Close));
+        assert_eq!(binding_named("desk_10"), None);
+        assert_eq!(binding_named(""), None);
+    }
+
+    #[test]
     fn key_labels() {
         let c = config("modifier = \"super\"\n[keys]\nclose = [\"mod+q\", \"super+'\"]\n");
         assert_eq!(c.key_label(Binding::Close), "super+q, super+apostrophe");
@@ -1211,6 +1355,39 @@ mod tests {
         assert_eq!(config("border_color = \"ff0000\"\n").border_color, Some([1.0, 0.0, 0.0, 1.0]));
         assert_eq!(config("border_color = \"#ffffff00\"\n").border_color, Some([0.0, 0.0, 0.0, 0.0]));
         assert_eq!(config("border_color = \"blue\"\n").border_color, Some([1.0, 1.0, 1.0, 1.0]));
+    }
+
+    #[test]
+    fn animations() {
+        use std::time::Duration;
+        assert_eq!(config("").animations, Animations::default());
+        let a = config("[animations]\nresize_ms = 300\nclose_ms = 0\nclose_scale = 0.6\n").animations;
+        assert_eq!((a.resize, a.close, a.close_scale), (Duration::from_millis(300), Duration::ZERO, 0.6));
+        let a = config("[animations]\nenabled = false\nresize_ms = 300\n").animations;
+        assert_eq!((a.resize, a.close), (Duration::ZERO, Duration::ZERO));
+        let a = config("[animations]\nresize_ms = 5000\nclose_scale = 2.0\n").animations;
+        assert_eq!((a.resize, a.close_scale), (Duration::from_millis(150), 0.85));
+    }
+
+    #[test]
+    fn tab_style() {
+        use crate::tab_title::TabStyle;
+        assert_eq!(config("").tab_style, TabStyle::default());
+        let c = config("[tabs]\nheight = 30\nfont_size = 16\nbackground = \"#000000\"\nactive = \"#ff0000\"\ntext = \"blue\"\n");
+        let s = c.tab_style;
+        assert_eq!((s.height, s.font_size, s.background, s.active), (30, 16, [0, 0, 0], [255, 0, 0]));
+        assert_eq!(s.text, TabStyle::default().text);
+        assert_eq!(config("[tabs]\nheight = 99\n").tab_style.height, TabStyle::default().height);
+    }
+
+    #[test]
+    fn look() {
+        let c = config("");
+        assert_eq!((c.focus_color, c.background_color, c.border_width, c.gap), (Some(FOCUS), BACKGROUND, 1, 6));
+        let c = config("focus_color = \"none\"\nbackground_color = \"#ff000080\"\nborder_width = 3\ngap = 0\n");
+        assert_eq!((c.focus_color, c.background_color, c.border_width, c.gap), (None, [0.5019608, 0.0, 0.0, 1.0], 3, 0));
+        let c = config("background_color = \"none\"\nborder_width = 17\ngap = -1\n");
+        assert_eq!((c.background_color, c.border_width, c.gap), (BACKGROUND, 1, 6));
     }
 
     #[test]

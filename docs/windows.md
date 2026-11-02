@@ -30,7 +30,7 @@ the right of the focused one and the view slides to show whatever takes focus, w
 - **Focus** `Mod+h/j/k/l` (or the arrows) moves focus; the view follows.
 - **Swap** `Mod+Shift+direction` swaps the tile with its neighbour. With nothing that way
   on this monitor it moves to the next monitor.
-- **Edge marks** `‹1` and `2›` at the middle of the screen edges count the tiles past them.
+- **Edge marks** `‹1` and `2›` at the middle of the screen edges count the tiles past them, in white.
 - **Edge push**: pushing the pointer against the left or right screen edge slides the
   strip that way, past a little resistance. The view stays there until focus moves, or
   until you click the focused tile that was slid off. When the whole strip fits on the
@@ -154,10 +154,30 @@ to another desktop and back keeps it.
 `Mod+Shift+Space` (or a Mod+click without moving) floats the tile above the strip; the
 same again puts it back. Mod+left-drag moves a float, Mod+right-drag resizes it.
 
+A **sticky** float (`On top, every desktop` in the tile options, the `sticky` key or rule
+action, none bound by default) stays in front of every other tile, a fullscreen one too,
+and on its monitor whichever desktop it shows, at the same place: a camera, a video, a
+call. A tiled tile turned sticky floats small in the bottom right corner (16:9); move and
+resize it as any float. The same again makes it an ordinary float.
+
+`dune-camera` (installed by `make install`; mpv on the first video device, mirrored, run
+again to close) is meant for it. Its picture fills the float whatever its shape, cropping
+what does not fit: resize it to a square or a strip to frame just a face
+(`DUNE_CAMERA_CROP=0` letterboxes instead).
+
+```toml
+[spawn]
+"mod+c" = "dune-camera"
+
+[[rules]]
+app_id = "^dune-camera$"
+actions = ["sticky"]
+```
+
 The **scratchpad** works like sway's: `` Mod+Shift+` `` puts the tile away, off every desktop.
 `` Mod+` `` calls the next one back as a float on the active monitor; on a shown, focused one
 it puts it away again at the end of the queue, so repeated presses cycle through them.
-The scratchpad is also the first cell of the dock, which lists its windows (see
+dune-shell's dock shows its windows too, next to the dock's entries (see
 [The dock](dock.md)).
 
 ```text
@@ -177,7 +197,7 @@ Every monitor has nine desktops (1-9) and shows one of them.
 |---|---|
 | `Mod+1` .. `Mod+9` | show that desktop |
 | `Mod+Shift+1` .. `Mod+Shift+9` | send the focused tile there |
-| `[keys] focus_monitor_*` | focus the monitor that way (unbound by default) |
+| `[keys] focus_monitor_*` | focus the monitor that way, or `_next` the next one (unbound by default) |
 
 ```text
    HDMI-A-1                      DP-1

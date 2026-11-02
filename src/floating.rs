@@ -20,6 +20,25 @@ const FLOAT_HEIGHT: f64 = 0.85;
 const DIALOG_SHARE: f64 = 0.5;
 /// Smallest floating tile, so a resize cannot make it vanish.
 const MIN_FLOAT: i32 = 100;
+/// Share of the output's width a tile takes when it starts sticky out of the strip (a
+/// camera, a video): 16:9, in the bottom right corner.
+const STICKY_WIDTH: f64 = 0.22;
+/// Room left between a tile that starts sticky and the output's edges.
+const STICKY_MARGIN: i32 = 24;
+
+/// Where a tile that starts sticky out of the strip goes: small, 16:9, bottom right of `area`.
+pub fn sticky_start(area: Rect) -> Rect {
+    let w = ((area.w as f64 * STICKY_WIDTH) as i32).max(MIN_FLOAT);
+    let h = (w * 9 / 16).max(MIN_FLOAT);
+    keep_inside(Rect::new(area.x + area.w - w - STICKY_MARGIN, area.y + area.h - h - STICKY_MARGIN, w, h), area)
+}
+
+/// `stack` (back to front) with the tiles `sticky` says at its front, each part in its order.
+fn sticky_in_front(stack: &mut Vec<(TileId, Rect)>, sticky: impl Fn(TileId) -> bool) {
+    let (front, back): (Vec<_>, Vec<_>) = stack.drain(..).partition(|(t, _)| sticky(*t));
+    stack.extend(back);
+    stack.extend(front);
+}
 
 /// A `w` x `h` rectangle in the middle of `area`.
 pub fn centered(area: Rect, w: i32, h: i32) -> Rect {
@@ -102,14 +121,41 @@ impl Dune {
         self.focus_tile(id);
     }
 
-    /// A focused float comes in front of the others on its output.
+    /// A focused float comes in front of the others on its output (but the sticky ones).
     pub fn raise_float(&mut self, id: TileId) {
         for stack in self.floating.values_mut() {
             if let Some(i) = stack.iter().position(|(t, _)| *t == id) {
                 let entry = stack.remove(i);
                 stack.push(entry);
             }
+            sticky_in_front(stack, |t| self.sticky.contains(&t));
         }
+    }
+
+    /// The `sticky` tile option: `id` floats in front of every other tile, on every desktop
+    /// of its monitor, where it is (out of the strip: small, in the bottom right corner);
+    /// again: an ordinary float.
+    pub fn toggle_sticky(&mut self, id: TileId) {
+        if self.sticky.remove(&id) {
+            tracing::info!(tile = id, "sticky off");
+            return self.arrange();
+        }
+        // On a desktop not shown it would stay there: only a tile shown can be sticky.
+        let Some(output) = self.output_of(id) else { return };
+        if !self.is_floating(id) {
+            let Some(area) = self.space.outputs().find(|o| o.name() == output).and_then(|o| self.output_rect(o)) else {
+                return;
+            };
+            let home = self.layouts.get(&output).and_then(|l| l.home(id));
+            self.float_tile(id, &output, sticky_start(area));
+            if let Some(home) = home {
+                self.float_homes.insert(id, (output, home));
+            }
+        }
+        self.sticky.insert(id);
+        tracing::info!(tile = id, "sticky on");
+        self.raise_float(id);
+        self.arrange();
     }
 
     /// A Mod+drag of a float: it follows the pointer from where it was (`from`) when the
@@ -161,6 +207,9 @@ impl Dune {
                 settled.entry(owner.clone()).or_default().push((id, keep_inside(rect, *area)));
             }
         }
+        for stack in settled.values_mut() {
+            sticky_in_front(stack, |t| self.sticky.contains(&t));
+        }
         self.floating = settled;
     }
 
@@ -211,6 +260,24 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect { x: 100, y: 0, w: 1000, h: 600 };
+
+    #[test]
+    fn a_sticky_tile_starts_small_in_the_bottom_right_corner() {
+        let r = sticky_start(Rect::new(0, 0, 2000, 1000));
+        assert_eq!((r.w, r.h), (440, 247));
+        assert_eq!((r.x + r.w, r.y + r.h), (2000 - STICKY_MARGIN, 1000 - STICKY_MARGIN));
+        // A small output: still all inside it.
+        let r = sticky_start(Rect::new(0, 0, 300, 200));
+        assert!(r.x >= 0 && r.y >= 0 && r.x + r.w <= 300 && r.y + r.h <= 200);
+    }
+
+    #[test]
+    fn sticky_floats_stay_in_front() {
+        let r = Rect::new(0, 0, 10, 10);
+        let mut stack = vec![(1, r), (2, r), (3, r), (4, r)];
+        sticky_in_front(&mut stack, |t| t == 2 || t == 1);
+        assert_eq!(stack.iter().map(|(t, _)| *t).collect::<Vec<_>>(), [3, 4, 1, 2]);
+    }
 
     #[test]
     fn floats_start_in_the_middle() {

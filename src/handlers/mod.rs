@@ -256,6 +256,85 @@ impl TabletSeatHandler for Dune {
     type ToolFocus = WlSurface;
 }
 
+//
+// Virtual keyboard: wtype and dictation type into the focused client. Their keys go straight
+// to it, never to dune's bindings, in the keymap they bring.
+//
+
+use smithay::backend::input::{Event as _, InputEvent, KeyboardKeyEvent as _};
+use smithay::input::keyboard::FilterResult;
+use smithay::utils::SERIAL_COUNTER;
+use smithay::wayland::virtual_keyboard::{
+    VirtualKeyboardBackend, VirtualKeyboardDevice, VirtualKeyboardHandler, VirtualKeyboardSpecialEvent,
+};
+
+impl VirtualKeyboardHandler for Dune {
+    fn process_virtual_keyboard_event(&mut self, event: InputEvent<VirtualKeyboardBackend>) {
+        match event {
+            InputEvent::Keyboard { event } => {
+                self.idle_notifier_state.notify_activity(&self.seat);
+                let device = event.device();
+                self.use_virtual_keymap(&device);
+                let keyboard = self.seat.get_keyboard().unwrap();
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.input_from_source::<(), _>(
+                    device.source(),
+                    self,
+                    event.key_code(),
+                    event.state(),
+                    serial,
+                    smithay::backend::input::Event::time(&event),
+                    |_, _, _| FilterResult::Forward,
+                );
+            }
+            InputEvent::Special(VirtualKeyboardSpecialEvent::Modifiers {
+                device,
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+            }) => {
+                self.use_virtual_keymap(&device);
+                let keyboard = self.seat.get_keyboard().unwrap();
+                keyboard.with_xkb_state(self, |mut xkb| {
+                    xkb.set_modifier_mask(mods_depressed, mods_latched, mods_locked, group)
+                });
+            }
+            InputEvent::DeviceRemoved { .. } => self.restore_seat_keymap(),
+            _ => {}
+        }
+    }
+}
+
+impl Dune {
+    /// Makes the device's keymap the seat's (its keycodes mean nothing in ours).
+    fn use_virtual_keymap(&mut self, device: &VirtualKeyboardDevice) {
+        let Some(keymap) = device.keymap() else {
+            return self.restore_seat_keymap();
+        };
+        if self.virtual_keymap.as_ref().is_some_and(|k| std::sync::Arc::ptr_eq(k, &keymap)) {
+            return;
+        }
+        let keyboard = self.seat.get_keyboard().unwrap();
+        match keyboard.set_keymap_from_string(self, keymap.to_string()) {
+            Ok(()) => self.virtual_keymap = Some(keymap),
+            Err(err) => tracing::warn!("virtual keyboard keymap refused: {err:?}"),
+        }
+    }
+
+    /// Brings back dune's own keymap after a virtual keyboard's.
+    pub fn restore_seat_keymap(&mut self) {
+        if self.virtual_keymap.take().is_none() {
+            return;
+        }
+        let keyboard = self.seat.get_keyboard().unwrap();
+        let xkb = self.config.clone();
+        if keyboard.set_xkb_config(self, xkb.xkb()).is_err() {
+            tracing::error!("could not restore the dune keyboard layout");
+        }
+    }
+}
+
 smithay::delegate_dispatch2!(Dune);
 
 //

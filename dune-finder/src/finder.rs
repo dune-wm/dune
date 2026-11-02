@@ -303,6 +303,37 @@ impl Finder {
         }
     }
 
+    /// `text` typed in, as keys would type it (`--query`); the characters that turn the apps into
+    /// another mode (`/`, `#`, `>`, `@`) or show the keys (`?`) do not lead it.
+    pub fn type_in(&mut self, text: &str) {
+        let text = text.trim_start_matches(['/', '#', '>', '@', '?', ' ']);
+        for c in text.chars().filter(|c| !c.is_control()) {
+            self.feed(&Modifiers::default(), Keysym::NoSymbol, Some(c));
+        }
+    }
+
+    /// `text` from the clipboard (Ctrl+V, Shift+Insert), as keys would type it: line breaks and
+    /// tabs as spaces, the ends trimmed. What a character does to the finder stops the rest.
+    pub fn paste(&mut self, text: &str) -> Action {
+        let text = text.trim().replace(['\n', '\r', '\t'], " ");
+        for c in text.chars().filter(|c| !c.is_control()) {
+            let action = self.feed(&Modifiers::default(), Keysym::NoSymbol, Some(c));
+            if action != Action::Continue {
+                return action;
+            }
+        }
+        Action::Continue
+    }
+
+    /// The first row taken, as a click on it (`--pick`): what Enter on a listed row does, never
+    /// the text as a command of its own. Nothing listed: `Continue`, the finder stays.
+    pub fn pick(&mut self) -> Action {
+        if self.nothing_typed() {
+            return Action::Continue;
+        }
+        self.click(Some(0))
+    }
+
     /// A click on row `row` of the list (`panel::row_at`); elsewhere on the panel, `None`.
     pub fn click(&mut self, row: Option<usize>) -> Action {
         let Some(row) = row else {
@@ -623,6 +654,41 @@ mod tests {
 
     fn key(f: &mut Finder, sym: Keysym) -> Action {
         f.feed(&Modifiers::default(), sym, sym.key_char())
+    }
+
+    #[test]
+    fn a_query_is_typed_in_and_pick_takes_its_first_row() {
+        let mut icons = Icons::new("");
+        let mut f = finder(Mode::Apps);
+        f.type_in("/fire");
+        assert_eq!(f.mode(), Mode::Apps);
+        assert_eq!(f.view(&mut icons, 16).prompt, "fire▏");
+        assert!(matches!(f.pick(), Action::Launch { .. }));
+        // A `:` word at the end says where (dune-voice's "new tab firefox").
+        let mut f = finder(Mode::Apps);
+        f.type_in("fire :t");
+        assert!(matches!(f.pick(), Action::Launch { dest: Dest { tab: true, .. }, .. }));
+        // Nothing typed: nothing picked (Enter would open a terminal).
+        let mut f = finder(Mode::Apps);
+        f.type_in("  ");
+        assert_eq!(f.pick(), Action::Continue);
+        // Nothing listed: the finder stays.
+        let mut f = finder(Mode::Apps);
+        f.type_in("zzzzqqq");
+        assert_eq!(f.pick(), Action::Continue);
+    }
+
+    #[test]
+    fn pasted_text_is_typed_in_on_one_line() {
+        let mut icons = Icons::new("");
+        let mut f = finder(Mode::Apps);
+        key(&mut f, Keysym::f);
+        assert_eq!(f.paste("ire\nfox\t \n"), Action::Continue);
+        assert_eq!(f.view(&mut icons, 16).prompt, "fire fox▏");
+        // Dictated text says what it says: a leading `/` turns the apps to the windows.
+        let mut f = finder(Mode::Apps);
+        f.paste(" /moz");
+        assert_eq!(f.mode(), Mode::Windows);
     }
 
     #[test]

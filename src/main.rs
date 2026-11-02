@@ -14,12 +14,14 @@ mod ipc;
 mod launcher;
 mod layout;
 mod lock;
+mod mod_hold;
 mod privacy;
 mod reload;
 mod rounded;
 mod rules;
 mod scale;
 mod seatop;
+mod settings;
 mod render;
 mod screencopy;
 mod scratchpad;
@@ -51,16 +53,35 @@ usage:
                                          open COMMAND in a new terminal tile
   dune scratchpad show|watch             show the next scratchpad window (or hide the focused
                                          one) / print a waybar JSON line on every change
-  dune dock show|watch                   show the dock of the bar's monitor ($WAYBAR_OUTPUT_NAME)
-                                         / print a waybar JSON line on every change
+  dune dock show [OUTPUT]                dune-shell shows the dock of OUTPUT, else of the bar's
+                                         monitor ($WAYBAR_OUTPUT_NAME), else the active one (again: hides it)
+  dune dock take TILE                    the dock entry holding TILE out, that tab shown
+                                         (TILE in the scratchpad: out of it)
+  dune dock pin TILE [OUTPUT]            pin that dock entry, or unpin it into OUTPUT's dock
+  dune dock watch                        print a waybar JSON line on every change of the bar's dock
   dune recording menu                    stop the recording running, else show the recording panel
   dune recording region|tile|screen      record that, or stop the recording running
   dune recording audio                   turn recording the microphone on or off
   dune recording stop|watch              stop the recording running / print a waybar JSON line
                                          on every change (with the time recorded)
-  dune events [window,desktop,output,strip,minimap]
+  dune events [window,desktop,output,strip,minimap,dock,mod,pointer]
                                          print a JSON line for every change, until dune goes away
   dune goto TILE                         show that window and focus it
+  dune action NAME                       do what the key of that name in [keys] does
+  dune pointer move X Y [OUTPUT] | by DX DY | click|press|release [left|right|middle] | where
+                                         move the pointer (from OUTPUT's corner, else the
+                                         layout's) or press its buttons, as a mouse would
+  dune find [--pick] [apps|windows|files] TEXT
+                                         dune-finder with TEXT typed in (--pick: its first row)
+                                         (focus_left, desk_3, close...: docs/configuration.md)
+  dune config get                        print the look settings of dune.toml as JSON (defaults for unset ones)
+  dune config set KEY VALUE              write one into dune.toml (comments kept) and apply it now;
+                                         KEY: border_color, focus_color, background_color,
+                                         border_width, gap, corner_radius, tabs.height,
+                                         tabs.font_size, tabs.background, tabs.active, tabs.text,
+                                         tabs.inactive_text, animations.enabled,
+                                         animations.resize_ms, animations.close_ms,
+                                         animations.close_scale
   dune shell                             run the dune layer around $DUNE_USER_SHELL (what tiles run)";
 
 fn main() {
@@ -85,6 +106,10 @@ fn main() {
         Some("recording") => ipc::recording_command(&args[1..]),
         Some("events") => events::events_command(&args[1..]),
         Some("goto") => ipc::goto_command(&args[1..]),
+        Some("action") => ipc::action_command(&args[1..]),
+        Some("pointer") => ipc::pointer_command(&args[1..]),
+        Some("find") => ipc::find_command(&args[1..]),
+        Some("config") => settings::config_command(&args[1..]),
         Some("shell") => shell::run(shell::ARGV0, args[1..].iter().map(Into::into).collect()),
         Some("-h") | Some("--help") => {
             println!("{USAGE}");

@@ -1,4 +1,5 @@
-//! Which tiles play sound, so a docked one can show it (a speaker on its bar). A thread
+//! Which tiles play sound, so dune-shell's dock can show it on a docked one (`sound` in
+//! `dune events dock`). A thread
 //! follows `pactl subscribe` and, on every change of the playback streams, lists them
 //! (`pactl list sink-inputs`): the processes of the streams playing (not paused, not
 //! muted) are sent to the event loop, which marks the tiles they belong to. A browser

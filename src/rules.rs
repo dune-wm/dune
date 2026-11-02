@@ -144,6 +144,7 @@ impl Dune {
             match action {
                 TileAction::Float if self.is_floating(id) => {}
                 TileAction::Mute if self.tile_muted(id) => {}
+                TileAction::Sticky if self.sticky.contains(&id) => {}
                 _ => self.run_tile_action(Some(id), action),
             }
             if takes_it_away(action) {

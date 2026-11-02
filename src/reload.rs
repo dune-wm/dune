@@ -49,6 +49,9 @@ impl Dune {
             [&c.keyboard_rules, &c.keyboard_model, &c.keyboard_layout, &c.keyboard_variant, &c.keyboard_options].map(String::clone)
         };
         let config = self.config.clone();
+        if keyboard(&config) != keyboard(&old) {
+            self.virtual_keymap = None;
+        }
         if keyboard(&config) != keyboard(&old)
             && let Some(handle) = self.seat.get_keyboard()
             && handle.set_xkb_config(self, config.xkb()).is_err()
@@ -60,8 +63,8 @@ impl Dune {
         {
             handle.change_repeat_info(config.repeat_rate, config.repeat_delay);
         }
-        if (&self.config.font_family, self.config.tab_widths) != (&old.font_family, old.tab_widths) {
-            self.tab_titles = crate::tab_title::TabTitles::new(&self.config.font_family, self.config.tab_widths);
+        if (&self.config.font_family, self.config.tab_widths, self.config.tab_style) != (&old.font_family, old.tab_widths, old.tab_style) {
+            self.tab_titles = crate::tab_title::TabTitles::new(&self.config.font_family, self.config.tab_widths, self.config.tab_style);
         }
         if self.config.input != old.input {
             self.configure_input_devices();

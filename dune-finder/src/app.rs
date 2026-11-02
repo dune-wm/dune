@@ -1,7 +1,7 @@
 //! The panel on screen (a wlr-layer-shell surface, via smithay-client-toolkit), its
 //! keyboard and pointer, and what is asked of dune when something is chosen.
 
-use std::time::Duration;
+use std::{io::Read, time::Duration};
 
 use dune_common::{
     desktop,
@@ -10,15 +10,25 @@ use dune_common::{
 };
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
+    data_device_manager::{
+        DataDeviceManagerState,
+        data_device::{DataDevice, DataDeviceHandler},
+        data_offer::{DataOfferHandler, DragOffer},
+        data_source::DataSourceHandler,
+        WritePipe,
+    },
     delegate_registry,
     output::{OutputHandler, OutputState},
     reexports::{
-        calloop::{EventLoop, LoopHandle},
+        calloop::{EventLoop, LoopHandle, PostAction},
         calloop_wayland_source::WaylandSource,
         client::{
             Connection, QueueHandle,
             globals::registry_queue_init,
-            protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+            protocol::{
+                wl_data_device::WlDataDevice, wl_data_device_manager::DndAction, wl_data_source::WlDataSource,
+                wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
+            },
         },
     },
     registry::{ProvidesRegistryState, RegistryState},
@@ -49,6 +59,8 @@ use crate::{
 };
 
 const BTN_LEFT: u32 = 0x110;
+/// The clipboard's text types, the best first.
+const TEXT_MIMES: [&str; 5] = ["text/plain;charset=utf-8", "text/plain;charset=UTF-8", "UTF8_STRING", "text/plain", "STRING"];
 /// Space kept between the panel and the edges of the output (or empty container).
 const GAP: i32 = 6;
 /// How long dune may take to answer.
@@ -72,6 +84,10 @@ pub struct Options {
     pub file_manager_terminal: Option<String>,
     /// dune's terminal (`wezterm start`): its app heads the apps; empty: none.
     pub terminal: String,
+    /// Typed in at the start (`--query`, `dune find`).
+    pub query: Option<String>,
+    /// Take the first row of `query` right away, showing nothing when there is one (`--pick`).
+    pub pick: bool,
 }
 
 impl Default for Options {
@@ -88,6 +104,8 @@ impl Default for Options {
             file_manager: "yazi".into(),
             file_manager_terminal: None,
             terminal: String::new(),
+            query: None,
+            pick: false,
         }
     }
 }
@@ -110,6 +128,9 @@ struct App {
     configured: bool,
     exit: bool,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// The clipboard, read on Ctrl+V (Hex's dictation pastes that way); None: no clipboard.
+    data_devices: Option<DataDeviceManagerState>,
+    data_device: Option<DataDevice>,
     pointer: Option<wl_pointer::WlPointer>,
     modifiers: Modifiers,
     /// Wheel motion not yet turned into a step (touchpads scroll in pixels).
@@ -163,6 +184,10 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     if options.mode == Mode::Recording {
         finder.show_recording(&recording_state());
     }
+    if let Some(query) = &options.query {
+        finder.type_in(query);
+    }
+    let picked = options.pick.then(|| finder.pick()).filter(|a| *a != Action::Continue);
     let (w, h) = panel::panel_size(font.as_ref(), i32::MAX, panel::ROWS as i32 * panel::line_height(font.as_ref()));
     let compact = options.compact && finder.untouched();
 
@@ -181,6 +206,8 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         configured: false,
         exit: false,
         keyboard: None,
+        data_devices: DataDeviceManagerState::bind(&globals, &qh).ok(),
+        data_device: None,
         pointer: None,
         modifiers: Modifiers::default(),
         wheel_rest: 0.0,
@@ -190,6 +217,11 @@ pub fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         finder,
         options,
     };
+    // `--pick` found a row: done, without showing anything.
+    if let Some(action) = picked {
+        app.act(action);
+        return Ok(());
+    }
     // The outputs' names and sizes, to pick ours and fit it.
     queue.roundtrip(&mut app)?;
     queue.roundtrip(&mut app)?;
@@ -504,9 +536,59 @@ impl App {
     }
 
     fn on_key(&mut self, event: KeyEvent) {
+        let m = &self.modifiers;
+        let paste = (m.ctrl && !m.alt && !m.logo && matches!(event.keysym, Keysym::v | Keysym::V))
+            || (m.shift && !m.ctrl && !m.alt && !m.logo && event.keysym == Keysym::Insert);
+        if paste {
+            return self.paste();
+        }
         let text = event.utf8.as_deref().and_then(|t| t.chars().next());
         let action = self.finder.feed(&self.modifiers, event.keysym, text);
         self.act(action);
+    }
+
+    /// What is in the clipboard typed in, once read (it comes through a pipe from its owner).
+    fn paste(&mut self) {
+        let Some(offer) = self.data_device.as_ref().and_then(|d| d.data().selection_offer()) else {
+            return;
+        };
+        let Some(mime) = offer.with_mime_types(|mimes| {
+            TEXT_MIMES.iter().find(|t| mimes.iter().any(|m| m == *t)).map(|t| t.to_string())
+        }) else {
+            return;
+        };
+        let pipe = match offer.receive(mime) {
+            Ok(pipe) => pipe,
+            Err(err) => return eprintln!("dune-finder: no clipboard: {err}"),
+        };
+        let mut data = Vec::new();
+        let inserted = self.loop_handle.insert_source(pipe, move |_, pipe, app| {
+            // SAFETY: the file is only read here, never closed.
+            let file = unsafe { pipe.get_mut() };
+            let mut buf = [0; 4096];
+            match file.read(&mut buf) {
+                Ok(0) => {
+                    let text = String::from_utf8_lossy(&data);
+                    let action = app.finder.paste(&text);
+                    app.act(action);
+                    PostAction::Remove
+                }
+                Ok(n) => {
+                    data.extend_from_slice(&buf[..n]);
+                    PostAction::Continue
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock || err.kind() == std::io::ErrorKind::Interrupted => {
+                    PostAction::Continue
+                }
+                Err(err) => {
+                    eprintln!("dune-finder: clipboard: {err}");
+                    PostAction::Remove
+                }
+            }
+        });
+        if let Err(err) = inserted {
+            eprintln!("dune-finder: clipboard: {err}");
+        }
     }
 
     fn on_pointer(&mut self, event: &PointerEvent) {
@@ -617,6 +699,9 @@ impl SeatHandler for App {
                 Box::new(|app, _, event| app.on_key(event)),
             );
             self.keyboard = keyboard.ok();
+            if self.data_device.is_none() {
+                self.data_device = self.data_devices.as_ref().map(|d| d.get_data_device(qh, &seat));
+            }
         }
         if capability == Capability::Pointer && self.pointer.is_none() {
             self.pointer = self.seat_state.get_pointer(qh, &seat).ok();
@@ -706,6 +791,29 @@ impl PointerHandler for App {
             }
         }
     }
+}
+
+// Only the clipboard is read: drags and sources of our own are not used.
+impl DataDeviceHandler for App {
+    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64, _: &wl_surface::WlSurface) {}
+    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+    fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice, _: f64, _: f64) {}
+    fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+    fn drop_performed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataDevice) {}
+}
+
+impl DataOfferHandler for App {
+    fn source_actions(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+    fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
+}
+
+impl DataSourceHandler for App {
+    fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: Option<String>) {}
+    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: String, _: WritePipe) {}
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource) {}
+    fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &WlDataSource, _: DndAction) {}
 }
 
 impl ShmHandler for App {

@@ -51,7 +51,7 @@ use crate::{
     Dune,
     config::{AdaptiveSync, InputConfig, OutputMode},
     gamma::linear_ramps,
-    render::{BACKGROUND, ScaledElements},
+    render::ScaledElements,
     state::Backend,
 };
 
@@ -623,7 +623,7 @@ impl Dune {
         let mut changed = false;
         // The screen shows this frame (or the same one already): it counts for a lock.
         let mut shown = false;
-        match surface.drm_output.render_frame(&mut renderer, &elements, BACKGROUND, flags) {
+        match surface.drm_output.render_frame(&mut renderer, &elements, self.config.background_color, flags) {
             Ok(result) if !result.is_empty => {
                 changed = true;
                 match surface.drm_output.queue_frame(()) {

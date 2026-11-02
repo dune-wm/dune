@@ -5,12 +5,13 @@
 //!
 //! `dune-finder [--mode apps|windows|files|jump|tile-options|system|recording] [--output NAME] [--target TILE] [--slot TILE
 //! --at X,Y,W,H] [--compact] [--font FAMILY] [--icon-theme THEME] [--file-manager CMD]
-//! [--file-manager-terminal CMD] [--terminal CMD]` (the font, icon theme and file manager
+//! [--file-manager-terminal CMD] [--terminal CMD] [--query TEXT [--pick]]` (the font, icon theme and file manager
 //! come from `finder.toml`, see `settings`; the flags win over it): `--target` is
 //! the tile apps open next to (and the tile options are for); `--slot` the empty container they go into, `--at` where it is
 //! on the output; `--compact` shows no list until something is typed or browsed; `--file-manager` what Mod+Enter (or Ctrl+Enter) opens files in (default `yazi`),
 //! `--file-manager-terminal` the terminal it runs in (default: dune's), `--terminal` dune's
-//! terminal, whose app heads the apps before anything is typed.
+//! terminal, whose app heads the apps before anything is typed; `--query` text typed in at
+//! the start, `--pick` its first row taken right away (`dune find`, dune-voice).
 
 mod app;
 use dune_common::icons;
@@ -70,6 +71,8 @@ fn parse(mut options: Options, mut args: impl Iterator<Item = String>) -> Result
             "--file-manager" => options.file_manager = value()?,
             "--file-manager-terminal" => options.file_manager_terminal = Some(value()?),
             "--terminal" => options.terminal = value()?,
+            "--query" => options.query = Some(value()?),
+            "--pick" => options.pick = true,
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
@@ -123,6 +126,8 @@ mod tests {
         assert_eq!(parse(Options::default(), args("--mode tile-options")).unwrap().mode, Mode::TileOptions);
         assert_eq!(parse(Options::default(), args("--mode recording")).unwrap().mode, Mode::Recording);
         assert!(parse(Options::default(), args("--compact")).unwrap().compact);
+        let o = parse(Options::default(), args("--query fire --pick")).unwrap();
+        assert_eq!((o.query.as_deref(), o.pick), (Some("fire"), true));
         assert!(!parse(Options::default(), args("")).unwrap().compact);
         assert!(parse(Options::default(), args("--mode x")).is_err());
         assert!(parse(Options::default(), args("--slot")).is_err());

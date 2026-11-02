@@ -1,9 +1,11 @@
 //! The event stream of the control socket (`subscribe`, `dune events`), like sway's IPC
 //! `subscribe`: a JSON line for every change of the windows, the desktops shown, the
-//! monitors and the strip of tiles each monitor shows, and the requests of keys meant for
-//! the bar (`minimap`). dune takes a snapshot of them after each turn of its loop and writes what
-//! differs from the last one, so no action has to remember to tell. Windows of locked
-//! desktops are left out and private ones go by their masked title, as in `windows`.
+//! monitors, the strip of tiles and the dock each monitor shows, and the requests of keys
+//! meant for the bar (`minimap`, the dock's `toggle`), Mod held alone (`mod`), and the mouse's clicks (`pointer`:
+//! where on which monitor, for dune-eye-tracker to learn where you look). dune takes a snapshot of them after
+//! each turn of its loop and writes what differs from the last one, so no action has to
+//! remember to tell. Windows of locked desktops are left out and private ones go by their
+//! masked title, as in `windows`.
 //!
 //! ```text
 //! {"event":"window","change":"new","tile":3,"app_id":"foot","title":"~","place":"desk 1"}
@@ -15,6 +17,10 @@
 //! {"event":"output","change":"added","output":"DP-1"}
 //! {"event":"strip","change":"layout","output":"DP-1","view":0,"width":1920,"height":1080,"tiles":[{"tile":3,"x":8,"y":8,"w":948,"h":1064}]}
 //! {"event":"minimap","change":"toggle","output":"DP-1"}
+//! {"event":"dock","change":"entries","output":"DP-1","entries":[{"tile":3,"app_id":"foot","title":"vim","pinned":false,"tabs":[],"sound":false}],"scratchpad":[{"tile":7,"app_id":"foot","title":"~","sound":false}]}
+//! {"event":"dock","change":"toggle","output":"DP-1"}
+//! {"event":"mod","change":"start"}
+//! {"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1"}
 //! ```
 
 use std::{
@@ -37,6 +43,13 @@ pub enum Kind {
     Strip,
     /// The `minimap` key: show or hide the minimap of that monitor (dune-shell draws it).
     Minimap,
+    /// Each monitor's dock, and the `dock_show` key: show or hide it (dune-shell draws it).
+    Dock,
+    /// Mod or Shift held alone: `start`, `end`, `cancel` (`crate::mod_hold`; dune-voice listens, or dictates).
+    Mod,
+    /// A mouse button pressed (or `dune pointer click`): which, and where on which monitor.
+    /// Only when asked for, like `mod`; never while locked.
+    Pointer,
 }
 
 impl Kind {
@@ -47,6 +60,9 @@ impl Kind {
             "output" => Some(Kind::Output),
             "strip" => Some(Kind::Strip),
             "minimap" => Some(Kind::Minimap),
+            "dock" => Some(Kind::Dock),
+            "mod" => Some(Kind::Mod),
+            "pointer" => Some(Kind::Pointer),
             _ => None,
         }
     }
@@ -81,6 +97,36 @@ pub struct Placed {
     pub h: i32,
 }
 
+/// The dock a monitor shows (`Dune::dock_entries`, the pinned entries first) and the
+/// scratchpad's windows, the same on every monitor.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Dock {
+    pub entries: Vec<DockEntry>,
+    pub scratchpad: Vec<DockWindow>,
+}
+
+/// A dock entry: its lead (the shown tab of a column), whether pinned, and the first tile of
+/// each of its column's tabs (none for a tile, or a column of one tab).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DockEntry {
+    pub tile: TileId,
+    pub app_id: String,
+    pub title: String,
+    pub pinned: bool,
+    pub tabs: Vec<DockWindow>,
+    /// One of its windows plays sound (`crate::sound`).
+    pub sound: bool,
+}
+
+/// A window of the dock: a tab of a docked column, or one waiting in the scratchpad.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DockWindow {
+    pub tile: TileId,
+    pub app_id: String,
+    pub title: String,
+    pub sound: bool,
+}
+
 /// What dune tells about, at one moment.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
@@ -91,7 +137,12 @@ pub struct Snapshot {
     pub desks: BTreeMap<String, u8>,
     /// The strip each monitor shows (of the windows in `windows`).
     pub strips: BTreeMap<String, Strip>,
+    /// The dock each monitor shows.
+    pub docks: BTreeMap<String, Dock>,
 }
+
+/// How often the mouse's motion is told at most (`Dune::tell_motion`).
+const MOTION_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
@@ -120,6 +171,34 @@ pub enum Event {
         change: &'static str,
         output: String,
     },
+    Dock {
+        change: &'static str,
+        output: String,
+        #[serde(flatten)]
+        dock: Dock,
+    },
+    /// The `dock_show` key, or `dune dock show`.
+    #[serde(rename = "dock")]
+    DockToggle {
+        change: &'static str,
+        output: String,
+    },
+    Mod {
+        change: &'static str,
+        /// `mod` or `shift`: what is held alone.
+        keys: &'static str,
+    },
+    Pointer {
+        /// `click` (a button pressed) or `move` (the mouse moved it, `MOTION_EVERY` at most).
+        change: &'static str,
+        /// `left`, `right`, `middle`; none for `move`.
+        #[serde(skip_serializing_if = "str::is_empty")]
+        button: &'static str,
+        /// From the top-left corner of `output`, in logical pixels.
+        x: i32,
+        y: i32,
+        output: String,
+    },
 }
 
 impl Event {
@@ -130,12 +209,16 @@ impl Event {
             Event::Output { .. } => Kind::Output,
             Event::Strip { .. } => Kind::Strip,
             Event::Minimap { .. } => Kind::Minimap,
+            Event::Dock { .. } | Event::DockToggle { .. } => Kind::Dock,
+            Event::Mod { .. } => Kind::Mod,
+            Event::Pointer { .. } => Kind::Pointer,
         }
     }
 }
 
 /// What changed from `old` to `new`, in order: monitors added, windows opened and changed,
-/// desktops shown, strips laid out anew, the focus, windows closed, monitors removed.
+/// desktops shown, strips laid out anew, docks changed, the focus, windows closed, monitors
+/// removed.
 pub fn diff(old: &Snapshot, new: &Snapshot) -> Vec<Event> {
     let mut events = Vec::new();
     let outputs = |s: &Snapshot| s.desks.keys().cloned().collect::<BTreeSet<_>>();
@@ -160,6 +243,11 @@ pub fn diff(old: &Snapshot, new: &Snapshot) -> Vec<Event> {
     for (output, strip) in &new.strips {
         if old.strips.get(output) != Some(strip) {
             events.push(Event::Strip { change: "layout", output: output.clone(), strip: strip.clone() });
+        }
+    }
+    for (output, dock) in &new.docks {
+        if old.docks.get(output) != Some(dock) {
+            events.push(Event::Dock { change: "entries", output: output.clone(), dock: dock.clone() });
         }
     }
     if new.focused != old.focused
@@ -224,7 +312,31 @@ impl Dune {
                 Some((output.name(), Strip { view, width: area.w, height: area.h, tiles }))
             })
             .collect();
-        Snapshot { windows, focused, desks, strips }
+        let scratchpad: Vec<DockWindow> = self.scratchpad_tiles().into_iter().map(|t| self.dock_window(t)).collect();
+        let docks = self
+            .space
+            .outputs()
+            .map(|output| {
+                let entries = self
+                    .dock_entries(&output.name())
+                    .into_iter()
+                    .map(|i| {
+                        let entry = &self.dock[i];
+                        let lead = self.dock_window(entry.lead());
+                        let tabs = if entry.tabs() > 1 { entry.leads().into_iter().map(|t| self.dock_window(t)).collect() } else { Vec::new() };
+                        let sound = entry.tiles().into_iter().any(|t| self.plays_sound(t));
+                        DockEntry { tile: lead.tile, app_id: lead.app_id, title: lead.title, pinned: entry.pinned, tabs, sound }
+                    })
+                    .collect();
+                (output.name(), Dock { entries, scratchpad: scratchpad.clone() })
+            })
+            .collect();
+        Snapshot { windows, focused, desks, strips, docks }
+    }
+
+    /// `id` as the dock shows it: by its masked title when private.
+    fn dock_window(&self, id: TileId) -> DockWindow {
+        DockWindow { tile: id, app_id: self.tile_app_id(id).unwrap_or_default(), title: self.shown_title(id), sound: self.plays_sound(id) }
     }
 
     /// A `subscribe` connection: told the state now (as changes from nothing), then every
@@ -232,7 +344,7 @@ impl Dune {
     pub fn subscribe(&mut self, stream: UnixStream, kinds: &[String]) {
         let mut kinds: Vec<Kind> = kinds.iter().filter_map(|k| Kind::parse(k)).collect();
         if kinds.is_empty() {
-            kinds = vec![Kind::Window, Kind::Desktop, Kind::Output, Kind::Strip, Kind::Minimap];
+            kinds = vec![Kind::Window, Kind::Desktop, Kind::Output, Kind::Strip, Kind::Minimap, Kind::Dock];
         }
         if self.subscribers.is_empty() {
             self.last_snapshot = self.snapshot();
@@ -262,20 +374,66 @@ impl Dune {
 
     /// The `minimap` key: subscribers (dune-shell) hear it with the active monitor, after
     /// this turn of the loop. Nobody listening, it does nothing.
+    /// A mouse button pressed at `pos` (layout coordinates): subscribers of `pointer`
+    /// hear which, and where on the monitor there. Nobody listening, it does nothing.
+    pub fn tell_click(&mut self, button: u32, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        let name = match button {
+            crate::seatop::BTN_LEFT => "left",
+            crate::seatop::BTN_RIGHT => "right",
+            crate::input::BTN_MIDDLE => "middle",
+            _ => return,
+        };
+        if !self.subscribers.iter().any(|s| s.kinds.contains(&Kind::Pointer)) {
+            return;
+        }
+        let Some(output) = self.space.outputs().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(pos))) else { return };
+        let Some(geo) = self.space.output_geometry(output) else { return };
+        let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
+        self.asked_events.push(Event::Pointer { change: "click", button: name, x, y, output: output.name() });
+    }
+
+    /// The mouse (or touchpad) moved the pointer to `pos`, not `dune pointer`: subscribers of
+    /// `pointer` hear where, `MOTION_EVERY` at most (dune-eye-tracker leaves the pointer to
+    /// the hand meanwhile). Nobody listening, it does nothing.
+    pub fn tell_motion(&mut self, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        if !self.subscribers.iter().any(|s| s.kinds.contains(&Kind::Pointer)) {
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self.told_motion.is_some_and(|t| now.duration_since(t) < MOTION_EVERY) {
+            return;
+        }
+        let Some(output) = self.space.outputs().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(pos))) else { return };
+        let Some(geo) = self.space.output_geometry(output) else { return };
+        let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
+        self.told_motion = Some(now);
+        self.asked_events.push(Event::Pointer { change: "move", button: "", x, y, output: output.name() });
+    }
+
     pub fn ask_minimap(&mut self) {
         if let Some(output) = self.active_output() {
             self.asked_events.push(Event::Minimap { change: "toggle", output: output.name() });
         }
     }
+
+    /// The `dock_show` key, or `dune dock show`: subscribers (dune-shell) hear it with
+    /// `output` (none, or gone: the active monitor), after this turn of the loop. Nobody
+    /// listening, it does nothing.
+    pub fn ask_dock(&mut self, output: Option<String>) {
+        let exists = |o: &String| self.space.outputs().any(|out| out.name() == *o);
+        if let Some(output) = output.filter(exists).or_else(|| self.active_output().map(|o| o.name())) {
+            self.asked_events.push(Event::DockToggle { change: "toggle", output });
+        }
+    }
 }
 
 /// `dune events [KINDS]`: the event stream on stdout, a JSON line per change, until dune
-/// goes away. `KINDS`: `window`, `desktop`, `output`, `strip`, `minimap`, comma
-/// separated; none: all.
+/// goes away. `KINDS`: `window`, `desktop`, `output`, `strip`, `minimap`, `dock`, `mod`,
+/// `pointer`, comma separated; none: all but `mod` and `pointer`.
 pub fn events_command(args: &[String]) -> Result<(), String> {
     let kinds: Vec<String> = args.iter().flat_map(|a| a.split(',')).map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect();
     if let Some(bad) = kinds.iter().find(|k| Kind::parse(k).is_none()) {
-        return Err(format!("unknown event kind `{bad}`; usage: dune events [window,desktop,output,strip,minimap]"));
+        return Err(format!("unknown event kind `{bad}`; usage: dune events [window,desktop,output,strip,minimap,dock,mod,pointer]"));
     }
     let stream = watch(&Request::Subscribe { kinds })?;
     let mut out = std::io::stdout().lock();
@@ -300,6 +458,7 @@ mod tests {
             focused,
             desks: desks.iter().map(|(o, d)| (o.to_string(), *d)).collect(),
             strips: BTreeMap::new(),
+            docks: BTreeMap::new(),
         }
     }
 
@@ -312,6 +471,10 @@ mod tests {
                 Event::Output { change, output } => format!("output {change} {output}"),
                 Event::Strip { output, strip, .. } => format!("strip {output} {}", strip.view),
                 Event::Minimap { change, output } => format!("minimap {change} {output}"),
+                Event::Dock { change, output, dock } => format!("dock {change} {output} {}", dock.entries.len()),
+                Event::DockToggle { change, output } => format!("dock {change} {output}"),
+                Event::Mod { change, keys } => format!("mod {change} {keys}"),
+                Event::Pointer { change, button, x, y, output } => format!("pointer {change} {button} {x} {y} {output}"),
             })
             .collect()
     }
@@ -322,6 +485,36 @@ mod tests {
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"minimap","change":"toggle","output":"DP-1"}"#);
         assert_eq!(event.kind(), Kind::Minimap);
         assert_eq!(Kind::parse("minimap"), Some(Kind::Minimap));
+    }
+
+    #[test]
+    fn the_dock_toggle_line() {
+        let event = Event::DockToggle { change: "toggle", output: "DP-1".into() };
+        assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"dock","change":"toggle","output":"DP-1"}"#);
+        assert_eq!(event.kind(), Kind::Dock);
+        assert_eq!(Kind::parse("dock"), Some(Kind::Dock));
+    }
+
+    fn dock_window(tile: TileId, title: &str) -> DockWindow {
+        DockWindow { tile, app_id: "foot".into(), title: title.into(), sound: false }
+    }
+
+    #[test]
+    fn docks_are_told_when_they_change() {
+        let entry = |pinned| DockEntry { tile: 3, app_id: "foot".into(), title: "vim".into(), pinned, tabs: vec![], sound: false };
+        let dock = |pinned| Dock { entries: vec![entry(pinned)], scratchpad: vec![] };
+        let mut old = snapshot(&[window(1, "~", "desk 1")], Some(1), &[("DP-1", 1), ("HDMI-A-1", 1)]);
+        old.docks.insert("DP-1".into(), dock(false));
+        old.docks.insert("HDMI-A-1".into(), Dock::default());
+        let mut new = old.clone();
+        assert_eq!(diff(&old, &new), []);
+        new.docks.insert("DP-1".into(), dock(true));
+        assert_eq!(changes(&diff(&old, &new)), ["dock entries DP-1 1"]);
+        // From nothing, every monitor's dock, the empty ones too.
+        assert_eq!(
+            changes(&diff(&Snapshot::default(), &old)),
+            ["output added DP-1", "output added HDMI-A-1", "window new 1", "desktop DP-1 1", "desktop HDMI-A-1 1", "dock entries DP-1 1", "dock entries HDMI-A-1 0", "window focus 1"]
+        );
     }
 
     #[test]
@@ -372,6 +565,14 @@ mod tests {
             serde_json::to_string(&event).unwrap(),
             r#"{"event":"window","change":"new","tile":3,"app_id":"foot","title":"a \"b\"","place":"desk 1"}"#
         );
+        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into() };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1"}"#
+        );
+        assert_eq!(Kind::parse("pointer"), Some(Kind::Pointer));
+        let event = Event::Pointer { change: "move", button: "", x: 5, y: 6, output: "DP-1".into() };
+        assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"pointer","change":"move","x":5,"y":6,"output":"DP-1"}"#);
         let event = Event::Desktop { change: "focus", output: "DP-1".into(), desk: 2 };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"desktop","change":"focus","output":"DP-1","desk":2}"#);
         let strip = Strip { view: 4, width: 100, height: 50, tiles: vec![Placed { tile: 3, x: 1, y: 2, w: 30, h: 40 }] };
@@ -379,6 +580,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
             r#"{"event":"strip","change":"layout","output":"DP-1","view":4,"width":100,"height":50,"tiles":[{"tile":3,"x":1,"y":2,"w":30,"h":40}]}"#
+        );
+        let tabs = vec![dock_window(3, "vim"), DockWindow { sound: true, ..dock_window(5, "htop") }];
+        let entry = DockEntry { tile: 3, app_id: "foot".into(), title: "vim".into(), pinned: false, tabs, sound: true };
+        let dock = Dock { entries: vec![entry], scratchpad: vec![dock_window(7, "~")] };
+        let event = Event::Dock { change: "entries", output: "DP-1".into(), dock };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"event":"dock","change":"entries","output":"DP-1","entries":[{"tile":3,"app_id":"foot","title":"vim","pinned":false,"tabs":[{"tile":3,"app_id":"foot","title":"vim","sound":false},{"tile":5,"app_id":"foot","title":"htop","sound":true}],"sound":true}],"scratchpad":[{"tile":7,"app_id":"foot","title":"~","sound":false}]}"#
         );
     }
 }

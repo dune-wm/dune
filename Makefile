@@ -1,6 +1,6 @@
 # dune: build, check and install.
 #
-#   make install          dune, dune-open, dune-finder and dune-session into ~/.cargo/bin, plus the
+#   make install          dune, dune-open, dune-finder, dune-session and dune-camera into ~/.cargo/bin, plus the
 #                         portal settings into ~/.config (no root needed)
 #   make install-session  the "Dune" entry of the login screen (asks for sudo)
 #   make check            tests and clippy for the whole workspace
@@ -32,6 +32,7 @@ install-bin:
 	$(CARGO) install --path . --locked
 	$(CARGO) install --path dune-finder --locked
 	install -Dm755 dist/dune-session $(BINDIR)/dune-session
+	install -Dm755 dist/dune-camera $(BINDIR)/dune-camera
 
 # Screen sharing and screenshots through xdg-desktop-portal-wlr (see dist/dune-portals.conf).
 install-portals:

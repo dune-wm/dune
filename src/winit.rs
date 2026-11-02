@@ -14,7 +14,7 @@ use smithay::{
     wayland::dmabuf::DmabufFeedbackBuilder,
 };
 
-use crate::{Dune, render::BACKGROUND, state::Backend};
+use crate::{Dune, state::Backend};
 
 
 pub fn init_winit(event_loop: &mut EventLoop<Dune>, state: &mut Dune) -> Result<(), Box<dyn std::error::Error>> {
@@ -82,7 +82,7 @@ pub fn init_winit(event_loop: &mut EventLoop<Dune>, state: &mut Dune) -> Result<
                     let (renderer, mut framebuffer) = backend.bind().unwrap();
                     // The host draws the pointer.
                     let elements = state.output_elements(renderer, &output, false);
-                    damage_tracker.render_output(renderer, &mut framebuffer, 0, &elements, BACKGROUND).unwrap();
+                    damage_tracker.render_output(renderer, &mut framebuffer, 0, &elements, state.config.background_color).unwrap();
                 }
                 backend.submit(Some(&[damage])).unwrap();
                 backend.window().request_redraw();

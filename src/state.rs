@@ -5,7 +5,7 @@ use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType, layer_map_for_output},
     input::{Seat, SeatState, pointer::CursorImageStatus},
     reexports::{
-        calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic},
+        calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         wayland_server::{
             Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
@@ -95,6 +95,9 @@ pub struct Dune {
     /// Tiles that want to be fullscreen (one per monitor), until focus goes to another
     /// tile of their monitor or they ask to stop.
     pub fullscreen: HashSet<TileId>,
+    /// Floats in front of every other tile, kept on their monitor's shown desktop whichever
+    /// it is (`crate::floating`, the `sticky` tile option).
+    pub sticky: HashSet<TileId>,
     /// By output: the fullscreen tile covering it now (laid out on its shown desktop).
     pub covers: HashMap<String, TileId>,
     /// What the pointer is doing: pointing, or a Mod+drag (`crate::seatop`).
@@ -121,22 +124,18 @@ pub struct Dune {
     /// `subscribe` connections (`crate::events`), and what they were told last.
     pub subscribers: Vec<crate::events::Subscriber>,
     pub last_snapshot: crate::events::Snapshot,
-    /// Events asked for by keys meant for the bar (`minimap`), sent after this turn.
+    /// Events asked for by keys meant for the bar (`minimap`, `dock_show`), sent after this turn.
     pub asked_events: Vec<crate::events::Event>,
+    /// When the mouse's motion was last told to `pointer` subscribers (`tell_motion`).
+    pub told_motion: Option<std::time::Instant>,
+    /// Mod held alone (`crate::mod_hold`).
+    pub mod_hold: crate::mod_hold::ModHold,
     pub scratchpad_status: String,
     /// Tiles put away in the docks of the desktops, oldest first (`crate::dock`).
     pub dock: Vec<crate::dock::Docked>,
     /// Tiles and tabbed columns out of the dock that were pinned there: back in the dock,
     /// they are pinned again.
     pub dock_pins: HashSet<crate::dock::Pin>,
-    /// The monitor whose dock is shown, the pointer over it.
-    pub dock_open: Option<String>,
-    /// The dock shown is driven by keys (`dock_show`, a bar's click), and which of its
-    /// entries is chosen.
-    pub dock_keys: bool,
-    pub dock_selected: usize,
-    /// The tab chosen in the fan of the chosen entry, a tabbed column (none: the entry).
-    pub dock_tab: Option<usize>,
     /// `dune dock watch` connections, with the monitor they follow and the last line sent.
     pub dock_watchers: Vec<(std::os::unix::net::UnixStream, Option<String>, String)>,
     /// Tiles whose next windows are those of a process (`dune-open`, a `swallow` request)
@@ -200,14 +199,15 @@ pub struct Dune {
     pub backend: Backend,
     pub decorations: crate::render::Decorations,
     pub tab_titles: crate::tab_title::TabTitles,
-    /// The app icons the dock shows.
-    pub dock_icons: crate::dock::AppIcons,
     /// Bars told about the desktops (ext-workspace-v1).
     pub workspaces: crate::workspaces::WorkspaceState,
     /// Night light: gamma ramps clients set per monitor (wlr-gamma-control).
     pub gamma: crate::gamma::GammaState,
     /// dune-finder (Mod+d, Mod+/, Mod+Enter) while it runs.
     pub finder: Option<crate::launcher::FinderRun>,
+    /// The pid of a dune-finder that exited, from the thread waiting on it: one that never
+    /// showed its layer (`dune find --pick`) is forgotten by this, not by `layer_destroyed`.
+    pub finder_exited: channel::Sender<u32>,
     /// The screen recording (`record` key) while it runs, see `crate::screenshot`.
     pub recording: Option<crate::screenshot::Recording>,
     /// When wf-recorder started, while it records (the recording's shell says).
@@ -232,6 +232,9 @@ pub struct Dune {
     pub idle_notifier_state: smithay::wayland::idle_notify::IdleNotifierState<Dune>,
     /// Surfaces asking to hold off idle (idle-inhibit: videos, games), while they are alive.
     pub idle_inhibitors: Vec<WlSurface>,
+    /// The keymap of a virtual keyboard (wtype, dictation) while it is the seat's, until a
+    /// real key brings ours back.
+    pub virtual_keymap: Option<std::sync::Arc<str>>,
     /// Idle held off from dune-finder's Stay awake, until turned off again.
     pub stay_awake: bool,
     /// Screen lock (swaylock, ext-session-lock-v1), see `crate::lock`.
@@ -330,6 +333,8 @@ impl Dune {
         // Virtual machines, remote desktops and games that want every key, Mod ones too.
         let shortcuts_inhibit_state =
             smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState::new::<Self>(&dh);
+        // Typed keys from wtype and dictation (Hex pastes with it); open to every client, as sway.
+        smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState::new::<Self, _>(&dh, |_| true);
         let session_lock = crate::lock::SessionLock::new(&dh);
 
         let mut seat_state = SeatState::new();
@@ -345,6 +350,15 @@ impl Dune {
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
         let loop_signal = event_loop.get_signal();
+        let (finder_exited, exits) = channel::channel();
+        event_loop
+            .handle()
+            .insert_source(exits, |event, _, state: &mut Dune| {
+                if let channel::Event::Msg(pid) = event {
+                    state.finder_gone(Some(pid));
+                }
+            })
+            .expect("Failed to init the dune-finder exit source.");
 
         Self {
             start_time,
@@ -374,6 +388,7 @@ impl Dune {
             sound_titles: Vec::new(),
             edge_counts: HashMap::new(),
             fullscreen: HashSet::new(),
+            sticky: HashSet::new(),
             covers: HashMap::new(),
             seatop: Default::default(),
             floating: HashMap::new(),
@@ -389,13 +404,11 @@ impl Dune {
             subscribers: Vec::new(),
             last_snapshot: Default::default(),
             asked_events: Vec::new(),
+            told_motion: None,
+            mod_hold: Default::default(),
             scratchpad_status: String::new(),
             dock: Vec::new(),
             dock_pins: HashSet::new(),
-            dock_open: None,
-            dock_keys: false,
-            dock_selected: 0,
-            dock_tab: None,
             dock_watchers: Vec::new(),
             launches: HashMap::new(),
             next_launch: 1,
@@ -416,9 +429,9 @@ impl Dune {
             wlr_data_control_state,
             popups,
             seat,
-            tab_titles: crate::tab_title::TabTitles::new(&config.font_family, config.tab_widths),
-            dock_icons: Default::default(),
+            tab_titles: crate::tab_title::TabTitles::new(&config.font_family, config.tab_widths, config.tab_style),
             finder: None,
+            finder_exited,
             recording: None,
             recording_since: None,
             recording_area: None,
@@ -450,6 +463,7 @@ impl Dune {
             cursor: crate::cursor::Cursor::load(),
             idle_notifier_state,
             idle_inhibitors: Vec::new(),
+            virtual_keymap: None,
             stay_awake: false,
             session_lock,
             privacy: Default::default(),
@@ -492,10 +506,6 @@ impl Dune {
         // Locked: only the lock surfaces take the pointer.
         if self.session_lock.is_locked() {
             return self.lock_surface_under(pos);
-        }
-        // The dock shown is over everything.
-        if self.dock_at((pos.x, pos.y)).1 {
-            return None;
         }
         let output = self.space.outputs().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(pos)))?;
         let output_loc = self.space.output_geometry(output)?.loc;

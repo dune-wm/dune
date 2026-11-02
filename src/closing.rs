@@ -32,10 +32,6 @@ use crate::{
     tiling::ease_out,
 };
 
-/// How long a closing tile takes to shrink and fade away.
-pub const CLOSE_ANIMATION: Duration = Duration::from_millis(150);
-/// How big a closing tile is by the end, as a share of its size.
-const CLOSE_SCALE: f64 = 0.85;
 
 /// A tile on its way out: its last frame, where it was, and since when.
 pub struct Closing {
@@ -45,20 +41,24 @@ pub struct Closing {
     pub radii: Radii,
     pub texture: TextureBuffer<GlesTexture>,
     start: Instant,
+    /// How long it takes to go (`animations.close_ms`), and how small it ends.
+    duration: Duration,
+    scale: f64,
 }
 
 impl Closing {
     /// Where it is drawn now (global) and how opaque; None once it is gone.
     pub fn now(&self) -> Option<(Rect, f32)> {
-        let t = self.start.elapsed().as_secs_f64() / CLOSE_ANIMATION.as_secs_f64();
-        (t < 1.0).then(|| shrink(self.rect, t))
+        let t = self.start.elapsed().as_secs_f64() / self.duration.as_secs_f64();
+        (t < 1.0).then(|| shrink(self.rect, t, self.scale))
     }
 }
 
-/// `rect` at `t` (0 to 1) of closing: shrunk around its middle and faded, eased out.
-fn shrink(rect: Rect, t: f64) -> (Rect, f32) {
+/// `rect` at `t` (0 to 1) of closing: shrunk around its middle towards `end` of its size
+/// and faded, eased out.
+fn shrink(rect: Rect, t: f64, end: f64) -> (Rect, f32) {
     let p = ease_out(t);
-    let scale = 1.0 - (1.0 - CLOSE_SCALE) * p;
+    let scale = 1.0 - (1.0 - end) * p;
     let w = (rect.w as f64 * scale).round() as i32;
     let h = (rect.h as f64 * scale).round() as i32;
     (Rect::new(rect.x + (rect.w - w) / 2, rect.y + (rect.h - h) / 2, w, h), (1.0 - p) as f32)
@@ -68,6 +68,11 @@ impl Dune {
     /// `window`, the last of tile `id`, drawn into a texture the size of the tile as it is
     /// shown; None when the tile is not on screen (put away, scrolled off) or it cannot be.
     pub fn closing_snapshot(&mut self, id: TileId, window: &Window) -> Option<Closing> {
+        // No animation: nothing to keep.
+        let (duration, scale) = (self.config.animations.close, self.config.animations.close_scale);
+        if duration.is_zero() {
+            return None;
+        }
         let output_name = self.output_of(id)?;
         let output = self.space.outputs().find(|o| o.name() == output_name)?.clone();
         let loc = self.space.element_location(window)? - window.geometry().loc;
@@ -104,7 +109,7 @@ impl Dune {
                 Some(TextureBuffer::from_texture(renderer, texture, 1, Transform::Normal, None))
             })
             .flatten()?;
-        Some(Closing { output: output_name, rect, radii, texture, start: Instant::now() })
+        Some(Closing { output: output_name, rect, radii, texture, start: Instant::now(), duration, scale })
     }
 
     /// The closing tiles of `output`, front first: each one's element, where it is
@@ -147,12 +152,12 @@ mod tests {
     #[test]
     fn a_closing_tile_shrinks_to_its_middle_and_fades() {
         let rect = Rect::new(100, 50, 400, 200);
-        assert_eq!(shrink(rect, 0.0), (rect, 1.0));
-        let (end, alpha) = shrink(rect, 1.0);
+        assert_eq!(shrink(rect, 0.0, 0.85), (rect, 1.0));
+        let (end, alpha) = shrink(rect, 1.0, 0.85);
         assert_eq!(end, Rect::new(130, 65, 340, 170));
         assert_eq!(alpha, 0.0);
         // The same middle all the way (to the pixel an odd size rounds by).
-        let (half, alpha) = shrink(rect, 0.5);
+        let (half, alpha) = shrink(rect, 0.5, 0.85);
         let ((x, y), (cx, cy)) = (half.center(), rect.center());
         assert!((x - cx).abs() <= 1 && (y - cy).abs() <= 1, "{:?}", half);
         assert!(half.w < rect.w && half.w > end.w);

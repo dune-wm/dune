@@ -86,6 +86,8 @@ pub enum FinderMode {
     Windows,
     /// The focused tile's options (Mod+/).
     TileOptions,
+    /// Files and folders (`#` in the finder; `dune find files`).
+    Files,
     /// Record a region, the focused tile or the screen, the microphone (`dune recording menu`).
     Recording,
 }
@@ -96,6 +98,7 @@ impl FinderMode {
             FinderMode::Apps => "apps",
             FinderMode::Windows => "windows",
             FinderMode::TileOptions => "tile-options",
+            FinderMode::Files => "files",
             FinderMode::Recording => "recording",
         }
     }
@@ -111,7 +114,7 @@ impl Dune {
                 && let Some(slot) = run.slot.take()
             {
                 self.close_finder();
-                return self.start_finder(mode, Some(slot), false);
+                return self.start_finder(mode, Some(slot), false, None);
             }
             return self.close_finder();
         }
@@ -119,7 +122,26 @@ impl Dune {
         if mode == FinderMode::TileOptions && self.focused.is_none() {
             return tracing::debug!("no focused tile: no tile options");
         }
-        self.start_finder(mode, None, false);
+        self.start_finder(mode, None, false, None);
+    }
+
+    /// `dune find`: dune-finder on `mode` with `text` typed in (one open goes first);
+    /// `pick`: its first row taken as Enter would. Not while the session is locked.
+    pub fn find(&mut self, mode: &str, pick: bool, text: &str) -> Result<(), String> {
+        let mode = match mode {
+            "apps" => FinderMode::Apps,
+            "windows" => FinderMode::Windows,
+            "files" => FinderMode::Files,
+            _ => return Err(format!("dune-finder has no `{mode}` to find in")),
+        };
+        if self.session_lock.is_locked() {
+            return Err("the session is locked".into());
+        }
+        if self.finder_running() {
+            self.close_finder();
+        }
+        self.start_finder(mode, None, false, Some((text, pick)));
+        Ok(())
     }
 
     /// Whether a dune-finder started by dune is still there; one that went away
@@ -134,8 +156,8 @@ impl Dune {
     }
 
     /// Start dune-finder in `mode`; with `slot`, for that empty container; `compact`: with no
-    /// list until something is typed.
-    fn start_finder(&mut self, mode: FinderMode, slot: Option<(TileId, Option<TileId>)>, compact: bool) {
+    /// list until something is typed; `query`: that typed in, and whether to take its first row.
+    fn start_finder(&mut self, mode: FinderMode, slot: Option<(TileId, Option<TileId>)>, compact: bool, query: Option<(&str, bool)>) {
         // The tile options show over the focused tile, wherever it is.
         let output = match slot {
             Some((id, _)) => self.output_of(id),
@@ -163,6 +185,12 @@ impl Dune {
         if compact {
             cmd.arg("--compact");
         }
+        if let Some((text, pick)) = query {
+            cmd.args(["--query", text]);
+            if pick {
+                cmd.arg("--pick");
+            }
+        }
         if let Some((id, _)) = slot {
             cmd.args(["--slot", &id.to_string()]);
         }
@@ -184,8 +212,11 @@ impl Dune {
             Ok(mut child) => {
                 let over = target.filter(|_| mode == FinderMode::TileOptions);
                 self.finder = Some(FinderRun { pid: child.id(), mode, slot, over });
+                // Gone, layer or not: forgotten (a newer one is left alone, see `finder_gone`).
+                let exited = self.finder_exited.clone();
                 std::thread::spawn(move || {
                     let _ = child.wait();
+                    let _ = exited.send(child.id());
                 });
             }
             Err(err) => {
@@ -298,7 +329,7 @@ impl Dune {
             self.close_finder();
         }
         self.focus_tile(id);
-        self.start_finder(FinderMode::Apps, Some((id, back)), compact);
+        self.start_finder(FinderMode::Apps, Some((id, back)), compact, None);
     }
 
     /// Take away the empty container `id` if nothing went into it, focusing `back`.

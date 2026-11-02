@@ -6,47 +6,28 @@ tile under the pointer, **Send to dock** in the tile options, or the window's ow
 button (`-`) puts a tile there. A tile
 of a tabbed column takes its whole column, tabs and all.
 
-Two ways open the dock of the desktop a monitor shows, as a bar down the left edge (along
-the bottom, just above the bar, when a monitor's bars are only at the bottom), over
-everything, with the icon of each entry's app (from the icon theme, as dune-finder finds
-them; the app's first letter without one). A pinned entry has
-an orange dot, a tabbed column a dot per tab, a window playing sound a speaker. The title
-of the entry under the pointer (or chosen by keys) shows beside the bar (above it, along
-the bottom).
+dune keeps the dock; dune-shell draws it, unfolding upward from the bottom left corner of
+the monitor, with the icon of each entry's app and the scratchpad's windows next to it.
+`Mod+Shift+e` (the `dock_show` key) asks dune-shell to show the dock of the active monitor
+(the one desktops switch on), or to hide it; `dune dock show [OUTPUT]` does the same for
+that monitor (a bar's click: the bar's monitor, from `$WAYBAR_OUTPUT_NAME`). See
+dune-shell's README for its mouse and keys.
 
-`Mod+Shift+e` (the `dock_show` key), for the active monitor (the one desktops switch on); or a click on
-the dock module of a bar (`dune dock show`, see [Waybar](session.md#waybar)), for the bar's monitor.
-It stays until Esc or a click away, and keys drive it: the arrows or `h`/`j`/`k`/`l` along
-the bar choose, Enter takes the entry out, `p` or Space pins it. Other keys do nothing meanwhile; the
-compositor's own bindings hide it and do their thing.
-
-```text
-  Mod+Shift+e, or a click on the bar's dock module
-  ┌──────┬───────────────────────────────
-  │ [*]··│                                  [*] the scratchpad, two windows waiting
-  │ [S] •│                                  [S] Spotify, pinned (•)
-  ▌ [h]  │ htop     the strip, as it was    [h] under the pointer: its title beside
-  │ [v]  │                                  [v] vim, a column of three tabs (···)
-  │  ··· │
-  └──────┘
-```
-
-- **Click** an entry: it goes back where it was in the strip (or where it floated), focused.
-- **Right click**: pin it, or unpin it. A pinned entry (📌) is in the dock of every desktop,
-  and comes out on the desktop shown: a tile floating, a tabbed column right of the
-  focused one. Unpinned, it belongs to the dock it was unpinned in.
-- **A tabbed column** chosen (by keys or under the pointer) fans out its tabs beside the bar
-  (above it, along the bottom): a row per tab, its icon and title. A click on one, or Enter
-  on it, brings the whole column back with that tab shown. The arrow away from the bar
-  (right, or up along the bottom) goes into the fan, up/down go through its tabs, the arrow
-  back leaves it.
-- `(+2)` tells a column's other tabs; a speaker 🔊 shows on entries that play sound
-  (followed through `pactl`; for browsers, matched by the MPRIS title).
-- **The scratchpad** is the first cell of every dock (a dot per window waiting there).
-  Chosen, under the pointer or by keys (the dock opens on it), it fans out its windows
-  like a column's tabs; a click on one (or Enter) floats it on the desktop shown, a click
-  on the cell takes out the first.
+- **Taking an entry out** (`dune dock take TILE`): it goes back where it was in the strip
+  (or where it floated), focused. For a tabbed column, the tab holding `TILE` shows. A
+  `TILE` waiting in the scratchpad floats out of it on the desktop shown.
+- **Pinning** (`dune dock pin TILE [OUTPUT]`): pin the entry holding `TILE`, or unpin it.
+  A pinned entry is in the dock of every desktop, and comes out on the desktop shown: a
+  tile floating, a tabbed column right of the focused one. Unpinned, it belongs to the
+  dock of the desktop `OUTPUT` shows (the active monitor without one).
+- **What dune-shell is told**: `dune events dock` writes each monitor's dock whenever it
+  changes, the pinned entries first: each entry's shown tile, app and title, whether it is
+  pinned or plays sound (followed through `pactl`; for browsers, matched by the MPRIS
+  title), and a tabbed column's tabs; then the scratchpad's windows. Private tiles go by
+  their masked title. See [`dune events`](session.md#command-line).
 - dune-finder's windows mode lists docked windows (`dock`, `dock 📌`); choosing one takes
   it out of the dock, going to its desktop.
+- `dune dock watch` writes a waybar line with the count of the monitor's dock, the titles
+  (`📌` before pinned ones, `(+2)` after a column's other tabs) in the tooltip.
 
 Tiles in a column or row never get smaller than a tenth of it: resizing stops there.

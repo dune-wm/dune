@@ -70,16 +70,26 @@ pub fn scratchpad_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// `dune dock show`: show the dock of the monitor of the bar it is run from (waybar says
-/// which in `$WAYBAR_OUTPUT_NAME`; else the active one), or hide it. `dune dock watch`: a
-/// line for waybar (`return-type: json`) with the windows in that dock, now and on every
-/// change, until dune goes away.
+/// `dune dock show [OUTPUT]`: dune-shell shows the dock of `OUTPUT`, else of the monitor of
+/// the bar it is run from (waybar says which in `$WAYBAR_OUTPUT_NAME`), else of the active
+/// one; or hides it. `dune dock take TILE`: the entry holding that tile out of the dock (or
+/// the tile out of the scratchpad). `dune dock pin TILE [OUTPUT]`: pin that entry, or unpin
+/// it into the dock `OUTPUT` shows (else the active monitor's). `dune dock watch`: a line
+/// for waybar (`return-type: json`) with the windows in that dock, now and on every change,
+/// until dune goes away.
 pub fn dock_command(args: &[String]) -> Result<(), String> {
-    let output = std::env::var("WAYBAR_OUTPUT_NAME").ok().filter(|o| !o.is_empty());
-    match args.first().map(String::as_str) {
-        Some("show") => ask(&Request::DockShow { output }, Duration::from_secs(1)).map(|_| ()),
-        Some("watch") => {
-            let stream = watch(&Request::WatchDock { output })?;
+    let bar = std::env::var("WAYBAR_OUTPUT_NAME").ok().filter(|o| !o.is_empty());
+    let tile = |t: &str| t.parse().map_err(|_| format!("not a tile: `{t}`"));
+    let wait = Duration::from_secs(1);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args[..] {
+        ["show"] => ask(&Request::DockShow { output: bar }, wait).map(|_| ()),
+        ["show", output] => ask(&Request::DockShow { output: Some(output.into()) }, wait).map(|_| ()),
+        ["take", t] => ask(&Request::DockTake { tile: tile(t)? }, wait).map(|_| ()),
+        ["pin", t] => ask(&Request::DockPin { tile: tile(t)?, output: None }, wait).map(|_| ()),
+        ["pin", t, output] => ask(&Request::DockPin { tile: tile(t)?, output: Some(output.into()) }, wait).map(|_| ()),
+        ["watch"] => {
+            let stream = watch(&Request::WatchDock { output: bar })?;
             let mut out = std::io::stdout().lock();
             for line in BufReader::new(stream).lines() {
                 let line = line.map_err(|e| e.to_string())?;
@@ -87,7 +97,7 @@ pub fn dock_command(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
-        _ => Err("usage: dune dock show|watch".into()),
+        _ => Err("usage: dune dock show [OUTPUT] | take TILE | pin TILE [OUTPUT] | watch".into()),
     }
 }
 
@@ -99,6 +109,69 @@ pub fn goto_command(args: &[String]) -> Result<(), String> {
             ask(&Request::GoTo { tile }, Duration::from_secs(1)).map(|_| ())
         }
         _ => Err("usage: dune goto TILE".into()),
+    }
+}
+
+/// `dune action NAME`: what the key of that name in `[keys]` does (`focus_left`, `desk_3`...).
+pub fn action_command(args: &[String]) -> Result<(), String> {
+    match args {
+        [name] => match ask(&Request::Action { name: name.clone() }, Duration::from_secs(1))?.as_str() {
+            "ok" => Ok(()),
+            "" => Err("dune did not answer (one older than `dune action`?)".into()),
+            why => Err(why.into()),
+        },
+        _ => Err("usage: dune action NAME".into()),
+    }
+}
+
+/// `dune pointer ...`: move the pointer or press its buttons as a mouse would (an eye
+/// tracker, a voice, a script); `where` prints `x y output`.
+pub fn pointer_command(args: &[String]) -> Result<(), String> {
+    use dune_common::protocol::{MouseButton, PointerOp};
+    const USAGE: &str = "usage: dune pointer move X Y [OUTPUT] | by DX DY | click|press|release [left|right|middle] | where";
+    let num = |s: &str| s.parse::<i32>().map_err(|_| format!("not a number: `{s}`\n{USAGE}"));
+    let button = |b: Option<&str>| match b {
+        None => Ok(MouseButton::Left),
+        Some(b) => MouseButton::parse(b).ok_or_else(|| format!("not a button: `{b}`\n{USAGE}")),
+    };
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let op = match args[..] {
+        ["move", x, y] => PointerOp::Move { x: num(x)?, y: num(y)?, output: None },
+        ["move", x, y, output] => PointerOp::Move { x: num(x)?, y: num(y)?, output: Some(output.into()) },
+        ["by", dx, dy] => PointerOp::By { dx: num(dx)?, dy: num(dy)? },
+        ["click", ref b @ ..] if b.len() <= 1 => PointerOp::Click(button(b.first().copied())?),
+        ["press", ref b @ ..] if b.len() <= 1 => PointerOp::Press(button(b.first().copied())?),
+        ["release", ref b @ ..] if b.len() <= 1 => PointerOp::Release(button(b.first().copied())?),
+        ["where"] => PointerOp::Where,
+        _ => return Err(USAGE.into()),
+    };
+    let is_where = op == PointerOp::Where;
+    match ask(&Request::Pointer(op), Duration::from_secs(1))?.as_str() {
+        "ok" => Ok(()),
+        "" => Err("dune did not answer (one older than `dune pointer`?)".into()),
+        place if is_where => {
+            println!("{place}");
+            Ok(())
+        }
+        why => Err(why.into()),
+    }
+}
+
+/// `dune find [--pick] [apps|windows|files] TEXT...`: dune-finder there (apps by default)
+/// with `TEXT` typed in; `--pick`: its first row taken as Enter would (dune-voice's "open X").
+pub fn find_command(args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: dune find [--pick] [apps|windows|files] TEXT...";
+    let mut args = args.iter().map(String::as_str).peekable();
+    let pick = args.next_if_eq(&"--pick").is_some();
+    let mode = args.next_if(|a| matches!(*a, "apps" | "windows" | "files")).unwrap_or("apps");
+    let text = args.collect::<Vec<_>>().join(" ");
+    if text.starts_with('-') {
+        return Err(USAGE.into());
+    }
+    match ask(&Request::Find { mode: mode.into(), pick, text }, Duration::from_secs(1))?.as_str() {
+        "ok" => Ok(()),
+        "" => Err("dune did not answer (one older than `dune find`?)".into()),
+        why => Err(why.into()),
     }
 }
 

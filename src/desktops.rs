@@ -195,18 +195,23 @@ impl Dune {
         Some(centered(area, w, h))
     }
 
+    /// The desktop `output` shows, taken off it; its sticky floats stay on the output.
     fn take_shown(&mut self, output: &str) -> Desk {
-        Desk {
-            layout: self.layouts.remove(output).unwrap_or_default(),
-            floating: self.floating.remove(output).unwrap_or_default(),
-            focused: None,
+        let (stay, floating): (Vec<_>, Vec<_>) =
+            self.floating.remove(output).unwrap_or_default().into_iter().partition(|(t, _)| self.sticky.contains(t));
+        if !stay.is_empty() {
+            self.floating.insert(output.to_string(), stay);
         }
+        Desk { layout: self.layouts.remove(output).unwrap_or_default(), floating, focused: None }
     }
 
+    /// `desk` shown on `output`, under the sticky floats that stayed there.
     fn show(&mut self, output: &str, desk: Desk) {
         self.layouts.insert(output.to_string(), desk.layout);
-        if !desk.floating.is_empty() {
-            self.floating.insert(output.to_string(), desk.floating);
+        let mut floating = desk.floating;
+        floating.extend(self.floating.remove(output).unwrap_or_default());
+        if !floating.is_empty() {
+            self.floating.insert(output.to_string(), floating);
         }
     }
 

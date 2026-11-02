@@ -1,7 +1,8 @@
 # dune-finder
 
 One panel, several modes. Type a prefix to switch modes; Backspace with nothing typed
-goes back; `Mod+Tab` / `Mod+Shift+Tab` cycle through every mode.
+goes back; `Mod+Tab` / `Mod+Shift+Tab` cycle through every mode. `Ctrl+V` (or
+`Shift+Insert`) types the clipboard in, on one line: what dictation (Hex) pastes.
 
 ```text
   ┌──────────────────────────────────────────────┐
@@ -43,3 +44,7 @@ goes back; `Mod+Tab` / `Mod+Shift+Tab` cycle through every mode.
 | **empty container** | `Mod+Return` | Enter right away puts a terminal there; anything chosen or typed goes there instead (`/` then a window moves it in). |
 
 A click chooses a row, the wheel scrolls, a click outside closes the panel.
+
+From outside (scripts, dune-voice): `dune find [--pick] [apps|windows|files] TEXT` opens it on
+that mode with `TEXT` typed in. `--pick` takes the first row as Enter would (an app, a window,
+a file) without showing the panel; when nothing matches, the panel stays open with the text.

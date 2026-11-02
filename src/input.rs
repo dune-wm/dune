@@ -16,17 +16,19 @@ use smithay::{
     },
 };
 
-use dune_common::protocol::TileAction;
+use dune_common::protocol::{MouseButton, PointerOp, TileAction};
 
 use crate::{
     config::{Binding, Config, TerminalHere},
-    dock::DockHit,
     launcher::FinderMode,
     layout::{Direction, Layout, Rect, Side, TileId, split_band, split_edge},
     screenshot::Capture,
     seatop::{BTN_LEFT, BTN_RIGHT},
     state::Dune,
 };
+
+/// The middle button (linux/input-event-codes.h).
+pub const BTN_MIDDLE: u32 = 0x112;
 
 /// What compositor keys do: the config's bindings (`Binding`), and VT switching.
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +41,10 @@ enum Action {
     Swap(Direction),
     /// Focus the monitor that way.
     FocusMonitor(Direction),
+    /// Focus the next monitor, top to bottom and left to right, back to the first.
+    FocusMonitorNext,
+    /// The focused tile to that next monitor.
+    MoveMonitorNext,
     /// Column width / tile height, as a share of the output.
     Width(f64),
     Height(f64),
@@ -70,14 +76,14 @@ enum Action {
     PrivateTile,
     /// Mute the sound of the focused tile's app (again: unmute it).
     MuteTile,
+    /// The focused tile floats in front of every other, on every desktop (again: off).
+    Sticky,
     /// The focused tile (with its tabs) into the dock of its desktop.
     Dock,
-    /// Mod+Shift+e: the dock of the focused tile's monitor, driven by keys (again: hide it).
+    /// Mod+Shift+e: dune-shell's dock of the active monitor (again: hide it), through `dune events`.
     DockShow,
     /// Mod+a: dune-shell's minimap of the active monitor, through `dune events`.
     Minimap,
-    /// A key on the dock shown for the keys.
-    DockKey(crate::dock::DockKey),
     /// Mod+v / Mod+s / Mod+Shift+t: a terminal to the right of the focused tile, below it
     /// or as a tab of its container, in its folder.
     Terminal(TerminalHere),
@@ -115,6 +121,8 @@ impl From<Binding> for Action {
             Binding::Swap(dir) => Action::Swap(dir),
             Binding::MoveTab(dir) => Action::MoveTab(dir),
             Binding::FocusMonitor(dir) => Action::FocusMonitor(dir),
+            Binding::FocusMonitorNext => Action::FocusMonitorNext,
+            Binding::MoveMonitorNext => Action::MoveMonitorNext,
             Binding::Desk(n) => Action::Desk(n),
             Binding::SendToDesk(n) => Action::SendToDesk(n),
             Binding::EmptyContainer => Action::EmptyContainer,
@@ -141,6 +149,7 @@ impl From<Binding> for Action {
             Binding::TileOptions => Action::TileOptions,
             Binding::PrivateTile => Action::PrivateTile,
             Binding::MuteTile => Action::MuteTile,
+            Binding::Sticky => Action::Sticky,
             Binding::Dock => Action::Dock,
             Binding::DockShow => Action::DockShow,
             Binding::Minimap => Action::Minimap,
@@ -511,7 +520,6 @@ impl Dune {
     fn hover_focus(&mut self, pos: Point<f64, Logical>) {
         let busy = !self.seatop.is_default()
             || self.finder.is_some()
-            || self.dock_open.is_some()
             || self.session_lock.is_locked();
         if !self.config.focus_follows_mouse || busy || self.seat.get_pointer().unwrap().is_grabbed()
         {
@@ -551,6 +559,18 @@ impl Dune {
         Some((id, side, split_band(&rect, side)))
     }
 
+    /// `dune action NAME`: what the key of that name in `[keys]` does, as if it were pressed;
+    /// not while the session is locked, like the keys.
+    pub fn run_named_action(&mut self, name: &str) -> Result<(), String> {
+        let binding = crate::config::binding_named(name).ok_or_else(|| format!("dune has no action `{name}`"))?;
+        let action = Action::from(binding);
+        if self.session_lock.is_locked() && !allowed_while_locked(&action) {
+            return Err("the session is locked".into());
+        }
+        self.run_action(action);
+        Ok(())
+    }
+
     fn run_action(&mut self, action: Action) {
         match action {
             Action::EmptyContainer => self.open_empty_container(),
@@ -560,16 +580,22 @@ impl Dune {
             Action::TileOptions => self.toggle_finder(FinderMode::TileOptions),
             Action::PrivateTile => self.toggle_private_focused(),
             Action::MuteTile => self.toggle_mute_focused(),
+            Action::Sticky => {
+                if let Some(id) = self.focused {
+                    self.toggle_sticky(id);
+                }
+            }
             Action::Dock => {
                 if let Some(id) = self.focused {
                     self.send_to_dock(id);
                 }
             }
-            Action::DockShow => self.toggle_dock_keys(None),
+            Action::DockShow => self.ask_dock(None),
             Action::Minimap => self.ask_minimap(),
-            Action::DockKey(key) => self.press_dock_key(key),
             Action::Focus(dir) => self.focus_direction(dir),
             Action::FocusMonitor(dir) => self.focus_output_direction(dir),
+            Action::FocusMonitorNext => self.focus_output_next(),
+            Action::MoveMonitorNext => self.move_to_output_next(),
             Action::Swap(dir) => self.swap_direction(dir),
             Action::Width(delta) => self.resize_focused(delta, 0.0, |l, id| l.resize_width(id, delta)),
             Action::Height(delta) => self.resize_focused(0.0, delta, |l, id| l.resize_height(id, delta)),
@@ -633,6 +659,7 @@ impl Dune {
 
     /// A key press or release: compositor keybindings first, then the focused client.
     pub fn handle_key(&mut self, keycode: Keycode, state: KeyState, time: InputTime) {
+        self.restore_seat_keymap();
         let serial = SERIAL_COUNTER.next_serial();
         let pressed = state == KeyState::Pressed;
         let config = self.config.clone();
@@ -640,26 +667,15 @@ impl Dune {
         let finder_open = self.finder.is_some();
         let locked = self.session_lock.is_locked();
         let inhibited = self.shortcuts_inhibited();
-        // The dock shown for the keys takes them: its own (`dock_key`), and the compositor's
-        // bindings (which hide it first); nothing else reaches the windows meanwhile.
-        let dock_keys = self.dock_keys && self.dock_open.is_some() && !locked;
 
+        let mut seen = None;
         let action = self.seat.get_keyboard().unwrap().input::<Action, _>(
             self,
             keycode,
             state,
             serial,
             time,
-            |_, mods, handle| match handle.raw_latin_sym_or_raw_current_sym().and_then(|sym| {
-                let plain = !(mods.ctrl || mods.alt || mods.logo || mods.shift);
-                match crate::dock::dock_key(sym) {
-                    Some(key) if dock_keys && plain => Some(Action::DockKey(key)),
-                    _ => action_for(&config, mods, sym),
-                }
-            }) {
-                Some(action) if dock_keys && pressed => FilterResult::Intercept(action),
-                // Any other key: swallowed, as a move that goes nowhere.
-                None if dock_keys && pressed => FilterResult::Intercept(Action::DockKey(crate::dock::DockKey::Nothing)),
+            |_, mods, handle| match handle.raw_latin_sym_or_raw_current_sym().inspect(|sym| seen = Some((*sym, *mods))).and_then(|sym| action_for(&config, mods, sym)) {
                 // While dune-finder is open, Mod+Enter and Mod+Tab are its own.
                 Some(Action::EmptyContainer | Action::CycleTab(_)) if finder_open => FilterResult::Forward,
                 Some(action) if locked && !allowed_while_locked(&action) => FilterResult::Forward,
@@ -668,12 +684,180 @@ impl Dune {
                 _ => FilterResult::Forward,
             },
         );
+        if let Some((sym, mods)) = seen {
+            self.track_mod_hold(sym, &mods, pressed);
+        }
         if let Some(action) = action {
-            if dock_keys && !matches!(action, Action::DockKey(_) | Action::DockShow) {
-                self.close_dock();
-            }
             self.run_action(action);
         }
+    }
+
+    /// `dune pointer`: the pointer moved, or its buttons pressed, as a mouse would (an eye
+    /// tracker, a voice); `ok`, why not, or for `Where` the place (`x y output`). Not while
+    /// the session is locked.
+    pub fn pointer_request(&mut self, op: PointerOp) -> String {
+        if self.session_lock.is_locked() {
+            return "the session is locked".into();
+        }
+        let here = self.seat.get_pointer().unwrap().current_location();
+        let code = |b: MouseButton| match b {
+            MouseButton::Left => crate::seatop::BTN_LEFT,
+            MouseButton::Right => crate::seatop::BTN_RIGHT,
+            MouseButton::Middle => BTN_MIDDLE,
+        };
+        match op {
+            PointerOp::Move { x, y, output } => {
+                let origin = match output {
+                    Some(name) => match self.space.outputs().find(|o| o.name() == name).and_then(|o| self.space.output_geometry(o)) {
+                        Some(geo) => geo.loc.to_f64(),
+                        None => return format!("no monitor `{name}`"),
+                    },
+                    None => Point::from((0.0, 0.0)),
+                };
+                self.pointer_move_to(origin + Point::from((x as f64, y as f64)));
+            }
+            PointerOp::By { dx, dy } => {
+                // A relative move, as a mouse's: pushing on against a left/right screen edge
+                // slides the strip there (an eye tracker's head turn).
+                let wanted = here + Point::from((dx as f64, dy as f64));
+                let pos = self.clamp_to_outputs(wanted);
+                let at_edge = (pos.x - here.x).abs() < 0.5;
+                let slide = edge_slide(&mut self.edge_push, at_edge, wanted.x - pos.x);
+                self.pointer_move_to(wanted);
+                self.slide_strip(pos, slide);
+            }
+            PointerOp::Click(b) => {
+                self.idle_notifier_state.notify_activity(&self.seat);
+                self.pointer_button(code(b), ButtonState::Pressed, InputTime::now());
+                self.pointer_button(code(b), ButtonState::Released, InputTime::now());
+            }
+            PointerOp::Press(b) | PointerOp::Release(b) => {
+                self.idle_notifier_state.notify_activity(&self.seat);
+                let state = if matches!(op, PointerOp::Press(_)) { ButtonState::Pressed } else { ButtonState::Released };
+                self.pointer_button(code(b), state, InputTime::now());
+            }
+            PointerOp::Where => {
+                let output = (self.space.outputs())
+                    .find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(here)))
+                    .map(|o| o.name())
+                    .unwrap_or_default();
+                return format!("{} {} {output}", here.x.round(), here.y.round());
+            }
+        }
+        "ok".into()
+    }
+
+    /// The pointer to `wanted` (kept on the screens), as an absolute motion of a mouse.
+    fn pointer_move_to(&mut self, wanted: Point<f64, Logical>) {
+        self.idle_notifier_state.notify_activity(&self.seat);
+        let pos = self.clamp_to_outputs(wanted);
+        self.pointer_at(pos);
+        self.seatop_motion(pos);
+        let pointer = self.seat.get_pointer().unwrap();
+        let under = self.surface_under(pos);
+        pointer.motion(self, under, &MotionEvent { location: pos, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() });
+        pointer.frame(self);
+        self.hover_focus(pos);
+    }
+
+    /// A mouse button going down or up, from a mouse or `dune pointer click`: Mod drags,
+    /// the dock click, the tab bar's "+", click to focus, then the client under the pointer.
+    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+        let locked = self.session_lock.is_locked();
+        let pointer = self.seat.get_pointer().unwrap();
+        let serial = SERIAL_COUNTER.next_serial();
+        let button_state = state;
+        if button_state == ButtonState::Pressed {
+            self.mod_hold_button();
+        }
+
+        // Locked: the click only goes to the lock surface.
+        if locked {
+            let button = ButtonEvent { button, state: button_state, serial, time };
+            pointer.button(self, &button);
+            return pointer.frame(self);
+        }
+
+        // `dune events pointer` (dune-eye-tracker learns from where you click): not while locked.
+        if button_state == ButtonState::Pressed {
+            self.tell_click(button, pointer.current_location());
+        }
+
+        // A click away from dune-finder closes it, and goes no further.
+        if button_state == ButtonState::Pressed
+            && self.finder_under(pointer.current_location()) == Some(false)
+        {
+            return self.close_finder();
+        }
+
+        let mods = self.seat.get_keyboard().unwrap().modifier_state();
+        let mod_held = modifier_held(&self.config.modifier, &mods);
+        let dock = self.config.dock_click.is_some_and(|c| c.matches(&mods, button));
+
+        // Mod+left and Mod+right drags (`crate::seatop`) take their buttons;
+        // while one goes on, every button is its own.
+        let pos = pointer.current_location();
+        if self.seatop_button(button, button_state, pos, mod_held, dock) {
+            return;
+        }
+
+        // `dock_click` puts the tile under the pointer into the dock. On a button Mod
+        // drags with, only a click does (on release).
+        if dock && button_state == ButtonState::Pressed && !(mod_held && [BTN_LEFT, BTN_RIGHT].contains(&button)) {
+            let pos = pointer.current_location();
+            if let Some(id) = self.tile_at(pos.x, pos.y).or_else(|| self.tab_at(pos.x, pos.y)) {
+                return self.send_to_dock(id);
+            }
+        }
+
+        // A click on the "+" of a tab bar: a new empty tab there, with dune-finder.
+        if button == BTN_LEFT
+            && button_state == ButtonState::Pressed
+            && !pointer.is_grabbed()
+        {
+            let pos = pointer.current_location();
+            if let Some(target) = self.plus_at(pos.x, pos.y) {
+                return self.open_empty_tab(target);
+            }
+        }
+
+        if button_state == ButtonState::Pressed {
+            let pos = pointer.current_location();
+            let under = self.surface_under(pos).map(|(s, o)| (smithay::reexports::wayland_server::Resource::id(&s), pos - o));
+            let focus = pointer.current_focus().map(|s| smithay::reexports::wayland_server::Resource::id(&s));
+            let window = self.space.element_under(pos).map(|(w, at)| (at, w.geometry(), w.bbox()));
+            tracing::info!(?pos, ?under, ?focus, ?window, grabbed = pointer.is_grabbed(), "click");
+        }
+
+        // Click to focus.
+        if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
+            let pos = pointer.current_location();
+            if let Some(id) = self.tab_at(pos.x, pos.y).or_else(|| self.tile_at(pos.x, pos.y)) {
+                if self.focused != Some(id) {
+                    self.focus_tile(id);
+                } else if !self.geometries.iter().any(|(t, r)| *t == id && self.shown.contains(&(*t, *r))) {
+                    // Focused already but partly off its monitor (slid there by hand):
+                    // the view brings it back whole.
+                    for layout in self.layouts.values_mut() {
+                        if layout.contains(id) {
+                            layout.stop_sliding();
+                        }
+                    }
+                    self.arrange();
+                }
+            }
+        };
+
+        pointer.button(
+            self,
+            &ButtonEvent {
+                button,
+                state: button_state,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
     }
 
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -724,8 +908,10 @@ impl Dune {
                     }
                 }
                 self.pointer_at(pos);
-                self.dock_hover((pos.x, pos.y));
                 self.seatop_motion(pos);
+                if !locked {
+                    self.tell_motion(pos);
+                }
                 let under = self.surface_under(pos);
                 pointer.motion(
                     self,
@@ -747,7 +933,6 @@ impl Dune {
                 let output_geo = self.space.output_geometry(output).unwrap();
                 let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
                 self.pointer_at(pos);
-                self.dock_hover((pos.x, pos.y));
                 self.seatop_motion(pos);
 
                 let serial = SERIAL_COUNTER.next_serial();
@@ -767,136 +952,7 @@ impl Dune {
                 self.hover_focus(pos);
             }
             InputEvent::PointerButton { event, .. } => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let serial = SERIAL_COUNTER.next_serial();
-                let button_state = event.state();
-
-                // Locked: the click only goes to the lock surface.
-                if locked {
-                    let button = ButtonEvent { button: event.button_code(), state: button_state, serial, time: event.time() };
-                    pointer.button(self, &button);
-                    return pointer.frame(self);
-                }
-
-                // A click away from dune-finder closes it, and goes no further.
-                if button_state == ButtonState::Pressed
-                    && self.finder_under(pointer.current_location()) == Some(false)
-                {
-                    return self.close_finder();
-                }
-
-                // The dock shown: a click on an entry takes it out, a right click pins it;
-                // the dock keeps the clicks on it. A click away hides it.
-                if self.dock_open.is_some() {
-                    let pos = pointer.current_location();
-                    let (hit, on_dock) = self.dock_at((pos.x, pos.y));
-                    if on_dock {
-                        if button_state == ButtonState::Pressed
-                            && let Some(hit) = hit
-                        {
-                            match (hit, event.button_code()) {
-                                (DockHit::Scratchpad, BTN_LEFT) => {
-                                    self.close_dock();
-                                    self.take_from_scratchpad(None);
-                                }
-                                (DockHit::Scratch(k), BTN_LEFT) => {
-                                    self.close_dock();
-                                    self.take_from_scratchpad(Some(k));
-                                }
-                                (DockHit::Entry(i), BTN_LEFT) => {
-                                    self.close_dock();
-                                    self.undock(i);
-                                }
-                                (DockHit::Tab(i, k), BTN_LEFT) => {
-                                    let tab = self.dock[i].leads().get(k).copied();
-                                    self.close_dock();
-                                    match tab {
-                                        Some(tab) => self.undock_showing(i, tab),
-                                        None => self.undock(i),
-                                    }
-                                }
-                                (DockHit::Entry(i) | DockHit::Tab(i, _), BTN_RIGHT) => {
-                                    let output = self.dock_open.clone().unwrap_or_default();
-                                    self.toggle_dock_pin(i, &output);
-                                }
-                                _ => {}
-                            }
-                        }
-                        return;
-                    }
-                    if button_state == ButtonState::Pressed {
-                        self.close_dock();
-                    }
-                }
-
-                let mods = self.seat.get_keyboard().unwrap().modifier_state();
-                let mod_held = modifier_held(&self.config.modifier, &mods);
-                let dock = self.config.dock_click.is_some_and(|c| c.matches(&mods, event.button_code()));
-
-                // Mod+left and Mod+right drags (`crate::seatop`) take their buttons;
-                // while one goes on, every button is its own.
-                let pos = pointer.current_location();
-                if self.seatop_button(event.button_code(), button_state, pos, mod_held, dock) {
-                    return;
-                }
-
-                // `dock_click` puts the tile under the pointer into the dock. On a button Mod
-                // drags with, only a click does (on release).
-                if dock && button_state == ButtonState::Pressed && !(mod_held && [BTN_LEFT, BTN_RIGHT].contains(&event.button_code())) {
-                    let pos = pointer.current_location();
-                    if let Some(id) = self.tile_at(pos.x, pos.y).or_else(|| self.tab_at(pos.x, pos.y)) {
-                        return self.send_to_dock(id);
-                    }
-                }
-
-                // A click on the "+" of a tab bar: a new empty tab there, with dune-finder.
-                if event.button_code() == BTN_LEFT
-                    && button_state == ButtonState::Pressed
-                    && !pointer.is_grabbed()
-                {
-                    let pos = pointer.current_location();
-                    if let Some(target) = self.plus_at(pos.x, pos.y) {
-                        return self.open_empty_tab(target);
-                    }
-                }
-
-                if button_state == ButtonState::Pressed {
-                    let pos = pointer.current_location();
-                    let under = self.surface_under(pos).map(|(s, o)| (smithay::reexports::wayland_server::Resource::id(&s), pos - o));
-                    let focus = pointer.current_focus().map(|s| smithay::reexports::wayland_server::Resource::id(&s));
-                    let window = self.space.element_under(pos).map(|(w, at)| (at, w.geometry(), w.bbox()));
-                    tracing::info!(?pos, ?under, ?focus, ?window, grabbed = pointer.is_grabbed(), "click");
-                }
-
-                // Click to focus.
-                if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
-                    let pos = pointer.current_location();
-                    if let Some(id) = self.tab_at(pos.x, pos.y).or_else(|| self.tile_at(pos.x, pos.y)) {
-                        if self.focused != Some(id) {
-                            self.focus_tile(id);
-                        } else if !self.geometries.iter().any(|(t, r)| *t == id && self.shown.contains(&(*t, *r))) {
-                            // Focused already but partly off its monitor (slid there by hand):
-                            // the view brings it back whole.
-                            for layout in self.layouts.values_mut() {
-                                if layout.contains(id) {
-                                    layout.stop_sliding();
-                                }
-                            }
-                            self.arrange();
-                        }
-                    }
-                };
-
-                pointer.button(
-                    self,
-                    &ButtonEvent {
-                        button: event.button_code(),
-                        state: button_state,
-                        serial,
-                        time: event.time(),
-                    },
-                );
-                pointer.frame(self);
+                self.pointer_button(event.button_code(), event.state(), event.time());
             }
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();

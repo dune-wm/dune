@@ -31,7 +31,7 @@ use smithay::{
     },
 };
 
-use crate::{render::BACKGROUND, state::Dune};
+use crate::state::Dune;
 
 /// Pixel formats offered for dmabuf captures (all the renderer can draw into, of these).
 const DMABUF_FORMATS: [Fourcc; 4] = [Fourcc::Argb8888, Fourcc::Xrgb8888, Fourcc::Abgr8888, Fourcc::Xbgr8888];
@@ -150,6 +150,7 @@ impl Dune {
         let buffer_size = transform.transform_size(region.size);
         let mut damage = OutputDamageTracker::new(buffer_size, 1.0, transform);
         let size = Size::from((buffer_size.w, buffer_size.h));
+        let background = self.config.background_color;
         self.with_renderer(|state, renderer| {
             // Moved so the region's corner is the buffer's.
             let elements: Vec<_> = state
@@ -160,11 +161,11 @@ impl Dune {
             if let Ok(dmabuf) = get_dmabuf(buffer) {
                 let mut dmabuf: Dmabuf = dmabuf.clone();
                 let mut target = renderer.bind(&mut dmabuf).map_err(|e| e.to_string())?;
-                let result = damage.render_output(renderer, &mut target, 0, &elements, BACKGROUND).map_err(|e| format!("{e:?}"))?;
+                let result = damage.render_output(renderer, &mut target, 0, &elements, background).map_err(|e| format!("{e:?}"))?;
                 // The client reads the buffer as soon as it hears the frame is ready.
                 result.sync.wait().map_err(|_| "interrupted while drawing".to_string())
             } else {
-                render_to_shm(renderer, &mut damage, &elements, size, buffer)
+                render_to_shm(renderer, &mut damage, &elements, size, buffer, background)
             }
         })
         .ok_or("no renderer")?
@@ -192,11 +193,12 @@ fn render_to_shm(
     elements: &[impl RenderElement<GlesRenderer>],
     size: Size<i32, smithay::utils::Buffer>,
     buffer: &WlBuffer,
+    background: [f32; 4],
 ) -> Result<(), String> {
     let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, size).map_err(|e| e.to_string())?;
     let mapping = {
         let mut target = renderer.bind(&mut texture).map_err(|e| e.to_string())?;
-        damage.render_output(renderer, &mut target, 0, elements, BACKGROUND).map_err(|e| format!("{e:?}"))?;
+        damage.render_output(renderer, &mut target, 0, elements, background).map_err(|e| format!("{e:?}"))?;
         renderer.copy_framebuffer(&target, Rectangle::from_size(size), Fourcc::Abgr8888).map_err(|e| e.to_string())?
     };
     let pixels = renderer.map_texture(&mapping).map_err(|e| e.to_string())?;

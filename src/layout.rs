@@ -68,7 +68,8 @@ impl Default for TabWidths {
         TabWidths { min: TAB_MIN_WIDTH, max: TAB_MAX_WIDTH }
     }
 }
-/// Width of the "+" at the end of a tab bar.
+/// Width of the "+" at the end of a bar `TAB_HEIGHT` tall: a bar's "+" is as wide as it is tall.
+#[cfg(test)]
 pub const PLUS_WIDTH: i32 = TAB_HEIGHT;
 /// Width of the marks at the ends of a scrolled tab bar, telling how many tabs are past them.
 pub const ARROW_WIDTH: i32 = 40;
@@ -88,10 +89,10 @@ impl TabBar {
     }
 }
 
-/// A tabbed container's bar and the room left for its shown tab. Every placement of
-/// the bar goes through here (today: along the top).
-pub fn split_tab_bar(rect: Rect) -> (Rect, Rect) {
-    let bar = Rect::new(rect.x, rect.y, rect.w, TAB_HEIGHT.min(rect.h));
+/// A tabbed container's bar, `height` tall, and the room left for its shown tab. Every
+/// placement of the bar goes through here (today: along the top).
+pub fn split_tab_bar(rect: Rect, height: i32) -> (Rect, Rect) {
+    let bar = Rect::new(rect.x, rect.y, rect.w, height.min(rect.h));
     let content = Rect::new(rect.x, rect.y + bar.h, rect.w, (rect.h - bar.h).max(1));
     (bar, content)
 }
@@ -129,8 +130,10 @@ impl TabStrip {
 /// down to `widths.min`. Past that the bar scrolls: as many tabs as fit, the shown one
 /// in the middle as far as it goes, with a mark at each end telling how many are past it.
 pub fn tab_strip(bar: Rect, n: usize, shown: usize, widths: TabWidths) -> TabStrip {
-    let room = bar.w - PLUS_WIDTH;
-    let plus_at = |x: i32| Rect::new(x.min(bar.x + bar.w - PLUS_WIDTH), bar.y, PLUS_WIDTH.min(bar.w), bar.h);
+    // The "+" is a square.
+    let plus = bar.h;
+    let room = bar.w - plus;
+    let plus_at = |x: i32| Rect::new(x.min(bar.x + bar.w - plus), bar.y, plus.min(bar.w), bar.h);
     if n <= 1 || n as i32 * widths.min <= room {
         let w = if n == 0 { 0 } else { (room / n as i32).clamp(1, widths.max) };
         let tabs = (0..n as i32).map(|i| Rect::new(bar.x + i * w, bar.y, w, bar.h)).collect();
@@ -894,7 +897,7 @@ impl Layout {
     /// slide the view so that `focus` (when it is here) is shown whole. Tiles off the
     /// view get rectangles outside `area`; tabs get the rectangle of their bar. Invisible
     /// tiles (e.g. a terminal that has not mapped its window yet) take no space.
-    pub fn geometries(&mut self, area: Rect, gap: i32, sep: i32, has_window: &dyn Fn(TileId) -> bool, focus: Option<TileId>) -> Vec<(TileId, Rect)> {
+    pub fn geometries(&mut self, area: Rect, gap: i32, sep: i32, tab_height: i32, has_window: &dyn Fn(TileId) -> bool, focus: Option<TileId>) -> Vec<(TileId, Rect)> {
         let visible = has_window;
         let inner_h = area.h - 2 * gap;
         // Columns at strip coordinates: (x, width, column index).
@@ -953,7 +956,7 @@ impl Layout {
             let mut content = Rect::new(area.x + x - self.view, area.y + gap, w, inner_h);
             let tabs: Vec<TileId> = views.iter().filter(|v| has_any(v)).map(|(rows, _)| rows[0].tiles[0]).collect();
             if tabs.len() > 1 || col.panes.len() == 1 {
-                let (bar, rest) = split_tab_bar(content);
+                let (bar, rest) = split_tab_bar(content, tab_height);
                 bars.push(TabBar { rect: bar, tabs, active: rows[0].tiles[0] });
                 content = rest;
             }
@@ -1113,7 +1116,7 @@ mod tests {
     }
 
     fn geo(l: &mut Layout, focus: TileId) -> Vec<(TileId, Rect)> {
-        l.geometries(AREA, 0, 0, &all, Some(focus))
+        l.geometries(AREA, 0, 0, TAB_HEIGHT, &all, Some(focus))
     }
 
     #[test]
@@ -1138,7 +1141,7 @@ mod tests {
         l.insert(2, Some(1), Split::Horizontal);
         // The gap goes around the column, the tiles inside it are `sep` apart.
         assert_eq!(
-            l.geometries(AREA, 10, 2, &all, Some(1)),
+            l.geometries(AREA, 10, 2, TAB_HEIGHT, &all, Some(1)),
             vec![(1, Rect::new(10, 10, 980, 289)), (2, Rect::new(10, 301, 980, 289))]
         );
     }
@@ -1235,7 +1238,7 @@ mod tests {
         assert_eq!(geo(&mut l, 2)[1], (2, Rect::new(250, 0, 500, 300)));
         // Focus elsewhere in the column, or on another output, keeps it centered.
         assert_eq!(geo(&mut l, 3)[1], (2, Rect::new(250, 0, 500, 300)));
-        assert_eq!(l.geometries(AREA, 0, 0, &all, Some(99))[1], (2, Rect::new(250, 0, 500, 300)));
+        assert_eq!(l.geometries(AREA, 0, 0, TAB_HEIGHT, &all, Some(99))[1], (2, Rect::new(250, 0, 500, 300)));
         // Pressing again stops centering: the view settles back with no empty space.
         l.toggle_center(3);
         assert_eq!(geo(&mut l, 2)[1], (2, Rect::new(500, 0, 500, 300)));
@@ -1350,7 +1353,7 @@ mod tests {
         l.insert(1, None, Split::Vertical);
         l.insert(2, Some(1), Split::Vertical);
         l.insert(3, Some(1), Split::Horizontal);
-        assert_eq!(l.geometries(AREA, 0, 0, &|t| t == 1, Some(1)), vec![(1, Rect::new(0, 0, 500, 600))]);
+        assert_eq!(l.geometries(AREA, 0, 0, TAB_HEIGHT, &|t| t == 1, Some(1)), vec![(1, Rect::new(0, 0, 500, 600))]);
     }
 
     #[test]
@@ -1589,11 +1592,11 @@ mod tests {
     #[test]
     fn a_tab_without_a_window_yet_shows_the_tab_that_has_one() {
         let mut l = tabbed();
-        let shown = l.geometries(AREA, 0, 0, &|t| t != 4, Some(4));
+        let shown = l.geometries(AREA, 0, 0, TAB_HEIGHT, &|t| t != 4, Some(4));
         // 4 was just launched: 1 keeps showing, with a bar of the tabs that have a window.
         assert_eq!(shown[0].0, 1);
         assert_eq!(l.tab_bars()[0].tabs, vec![1, 3]);
-        let alone = l.geometries(AREA, 0, 0, &|t| t == 1 || t == 2, Some(1));
+        let alone = l.geometries(AREA, 0, 0, TAB_HEIGHT, &|t| t == 1 || t == 2, Some(1));
         assert_eq!(alone[0], (1, Rect::new(0, 0, 500, 600)));
         assert!(l.tab_bars().is_empty());
     }
@@ -1762,7 +1765,7 @@ mod tests {
     #[test]
     fn tab_bar_layout() {
         let rect = Rect::new(10, 20, 300, 200);
-        assert_eq!(split_tab_bar(rect), (Rect::new(10, 20, 300, TAB_HEIGHT), Rect::new(10, 20 + TAB_HEIGHT, 300, 200 - TAB_HEIGHT)));
+        assert_eq!(split_tab_bar(rect, TAB_HEIGHT), (Rect::new(10, 20, 300, TAB_HEIGHT), Rect::new(10, 20 + TAB_HEIGHT, 300, 200 - TAB_HEIGHT)));
         let bar = Rect::new(0, 0, 1000, TAB_HEIGHT);
         let two = tab_strip(bar, 2, 0, TabWidths::default());
         assert_eq!(two.tabs, vec![Rect::new(0, 0, TAB_MAX_WIDTH, TAB_HEIGHT), Rect::new(TAB_MAX_WIDTH, 0, TAB_MAX_WIDTH, TAB_HEIGHT)]);

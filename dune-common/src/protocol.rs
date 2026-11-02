@@ -26,11 +26,22 @@
 //! - `scratchpad_show\t` — what the `scratchpad` key does (`dune scratchpad show`); answered `ok`;
 //! - `watch_scratchpad\t` — the connection stays open: dune writes a waybar JSON line with the
 //!   scratchpad's windows now and on every change (`dune scratchpad watch`);
-//! - `dock_show\t<output or empty>` — show the dock of that monitor (none: the active one),
-//!   driven by keys, or hide it when shown (`dune dock show`); answered `ok`;
+//! - `dock_show\t<output or empty>` — dune-shell shows the dock of that monitor (none: the
+//!   active one), or hides it when shown: a `dock` `toggle` event (`dune dock show`); answered `ok`;
+//! - `dock_take\t<tile>` — the dock entry holding that tile out, focused, the tile's tab
+//!   shown; a tile waiting in the scratchpad floats out of it instead (`dune dock take`);
+//!   answered `ok`;
+//! - `dock_pin\t<tile>\t<output or empty>` — pin the dock entry holding that tile, or unpin
+//!   it into the dock of the desktop that monitor shows (none: the active one) (`dune dock
+//!   pin`); answered `ok`;
 //! - `watch_dock\t<output or empty>` — the connection stays open: dune writes a waybar JSON
 //!   line with the windows in that monitor's dock now and on every change (`dune dock watch`);
 //! - `recording\tstarted|ended` — the recording's shell: wf-recorder started / ended;
+//! - `action\t<name>` — do what the key of that name in `[keys]` does (`focus_left`, `desk_3`,
+//!   `close`...), not while the session is locked (`dune action`); answered `ok`, else why not;
+//! - `find\t<apps|windows|files>\t<pick 0|1>\t<text>` — show dune-finder there with `text`
+//!   typed in; with `pick` 1 it takes the first row as Enter would, showing nothing when it
+//!   has one (`dune find`, dune-voice). Not while the session is locked; answered `ok`, else why not;
 //! - `recording_stop\t` — stop the recording running (`dune recording stop`); answered `ok`;
 //! - `recording_toggle\tregion|tile|screen` — start recording that, or stop the recording
 //!   running, like the `record` keys (`dune recording region|tile|screen`); answered `ok`;
@@ -185,9 +196,23 @@ impl Dest {
     /// `self` changed by a `:` word, its letters in any order: `d` and a digit (or a digit
     /// alone) is a desktop, `m` and a digit a monitor, `t` a tab of the current tile's
     /// container, `n` a new tile, `f` floating. `:d3`, `:3`, `:m2`, `:m2d3` (monitor 2,
-    /// desktop 3), `:t`, `:d2f`. None when the word is not one.
+    /// desktop 3), `:t`, `:d2f`. Spelled out, a side of the focused tile: `:left`,
+    /// `:right`, `:up` / `:above`, `:down` / `:below`. None when the word is not one.
     pub fn with(mut self, word: &str) -> Option<Dest> {
-        let mut chars = word.strip_prefix(':')?.chars();
+        let letters = word.strip_prefix(':')?;
+        let side = match letters.to_ascii_lowercase().as_str() {
+            "left" => Some(Side::Left),
+            "right" => Some(Side::Right),
+            "up" | "above" | "top" => Some(Side::Up),
+            "down" | "below" | "bottom" => Some(Side::Down),
+            _ => None,
+        };
+        if let Some(side) = side {
+            self.place = Place::Side(side);
+            self.tab = false;
+            return Some(self);
+        }
+        let mut chars = letters.chars();
         let digit = |c: Option<char>| {
             c.and_then(|c| c.to_digit(10))
                 .filter(|d| *d >= 1)
@@ -320,6 +345,9 @@ pub enum TileAction {
     /// Mute the playback streams of the tile's process (again: unmute them).
     Mute,
     Float,
+    /// Float in front of every other tile, on every desktop of its monitor, where it is
+    /// (a camera, a video); again: an ordinary float.
+    Sticky,
     Center,
     FullWidth,
     /// Out of its split into a tab of its own (`stack_to_tabs`).
@@ -336,7 +364,7 @@ impl TileAction {
     /// Every action, in the menu's order.
     pub fn all() -> Vec<TileAction> {
         use TileAction::*;
-        let mut all = vec![PrivateTile, Mute, Float, Center, FullWidth, ToTab];
+        let mut all = vec![PrivateTile, Mute, Float, Sticky, Center, FullWidth, ToTab];
         all.extend((1..=9).map(SendToDesk));
         all.extend([Dock, Scratchpad, Close]);
         all
@@ -348,6 +376,7 @@ impl TileAction {
             TileAction::PrivateTile => "private_tile".into(),
             TileAction::Mute => "mute_tile".into(),
             TileAction::Float => "float".into(),
+            TileAction::Sticky => "sticky".into(),
             TileAction::Center => "center".into(),
             TileAction::FullWidth => "full_width".into(),
             TileAction::ToTab => "stack_to_tabs".into(),
@@ -368,6 +397,7 @@ impl TileAction {
             TileAction::PrivateTile => "Private tile".into(),
             TileAction::Mute => "Mute".into(),
             TileAction::Float => "Float".into(),
+            TileAction::Sticky => "On top, every desktop".into(),
             TileAction::Center => "Center".into(),
             TileAction::FullWidth => "Full width".into(),
             TileAction::ToTab => "To tab".into(),
@@ -419,6 +449,79 @@ impl TileOption {
                 Some(TileOption { action, on, keys: parts.next()?.to_string() })
             })
             .collect()
+    }
+}
+
+/// A mouse button `dune pointer` presses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+impl MouseButton {
+    pub fn name(self) -> &'static str {
+        match self {
+            MouseButton::Left => "left",
+            MouseButton::Right => "right",
+            MouseButton::Middle => "middle",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<MouseButton> {
+        match name {
+            "left" => Some(MouseButton::Left),
+            "right" => Some(MouseButton::Right),
+            "middle" => Some(MouseButton::Middle),
+            _ => None,
+        }
+    }
+}
+
+/// What `dune pointer` does with the pointer (an eye tracker, a voice, a script).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PointerOp {
+    /// To `x, y`: from the top-left corner of `output`, else of the whole layout.
+    Move { x: i32, y: i32, output: Option<String> },
+    /// By `dx, dy` from where it is.
+    By { dx: i32, dy: i32 },
+    /// `button` pressed and let go.
+    Click(MouseButton),
+    /// `button` held down (a drag), until `Release`.
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Where it is: answered `x y output`.
+    Where,
+}
+
+impl PointerOp {
+    fn encode(&self) -> String {
+        match self {
+            PointerOp::Move { x, y, output } => format!("move\t{x}\t{y}\t{}", output.as_deref().unwrap_or_default()),
+            PointerOp::By { dx, dy } => format!("by\t{dx}\t{dy}"),
+            PointerOp::Click(b) => format!("click\t{}", b.name()),
+            PointerOp::Press(b) => format!("press\t{}", b.name()),
+            PointerOp::Release(b) => format!("release\t{}", b.name()),
+            PointerOp::Where => "where".into(),
+        }
+    }
+
+    fn decode(s: &str) -> Option<PointerOp> {
+        let parts: Vec<&str> = s.split('\t').collect();
+        match parts[..] {
+            ["move", x, y, output] => Some(PointerOp::Move {
+                x: x.parse().ok()?,
+                y: y.parse().ok()?,
+                output: Some(output).filter(|o| !o.is_empty()).map(String::from),
+            }),
+            ["by", dx, dy] => Some(PointerOp::By { dx: dx.parse().ok()?, dy: dy.parse().ok()? }),
+            ["click", b] => MouseButton::parse(b).map(PointerOp::Click),
+            ["press", b] => MouseButton::parse(b).map(PointerOp::Press),
+            ["release", b] => MouseButton::parse(b).map(PointerOp::Release),
+            ["where"] => Some(PointerOp::Where),
+            _ => None,
+        }
     }
 }
 
@@ -475,6 +578,12 @@ pub enum Request {
     WatchScratchpad,
     /// Show the dock of `output` (none: the active monitor's), or hide it when shown.
     DockShow { output: Option<String> },
+    /// The dock entry holding `tile` out, with `tile`'s tab shown (or `tile` out of the
+    /// scratchpad).
+    DockTake { tile: TileId },
+    /// Pin the dock entry holding `tile`, or unpin it into the dock `output` shows (none:
+    /// the active monitor's).
+    DockPin { tile: TileId, output: Option<String> },
     /// Keep the connection, writing the state of `output`'s dock (none: the active
     /// monitor's) on every change.
     WatchDock { output: Option<String> },
@@ -483,6 +592,13 @@ pub enum Request {
     Recording { started: bool, area: Option<(i32, i32, i32, i32)> },
     /// Stop the recording running.
     RecordingStop,
+    /// Apply `dune.toml` now, not on the next look at its time (`dune config set`).
+    ReloadConfig,
+    /// Do what the key of that name in `[keys]` does (`dune action`).
+    Action { name: String },
+    /// dune-finder on `mode` (`apps`, `windows`, `files`) with `text` typed in; `pick`: its
+    /// first row taken as Enter would (`dune find`).
+    Find { mode: String, pick: bool, text: String },
     /// Record `what` (`region`, `tile` or `screen`), or stop the recording running.
     RecordingToggle { what: String },
     /// Turn recording the microphone on or off.
@@ -495,6 +611,9 @@ pub enum Request {
     WatchRecording,
     /// Keep the connection, writing a JSON line for each change of `kinds` (empty: all).
     Subscribe { kinds: Vec<String> },
+    /// Move the pointer or press its buttons (`dune pointer`); answered `ok`, why not, or
+    /// for `Where` the place.
+    Pointer(PointerOp),
 }
 
 impl Request {
@@ -545,18 +664,24 @@ impl Request {
             Request::ScratchpadShow => "scratchpad_show\t".into(),
             Request::WatchScratchpad => "watch_scratchpad\t".into(),
             Request::DockShow { output } => format!("dock_show\t{}", output.as_deref().unwrap_or_default()),
+            Request::DockTake { tile } => format!("dock_take\t{tile}"),
+            Request::DockPin { tile, output } => format!("dock_pin\t{tile}\t{}", output.as_deref().unwrap_or_default()),
             Request::WatchDock { output } => format!("watch_dock\t{}", output.as_deref().unwrap_or_default()),
             Request::Recording { started, area } => {
                 let area = area.map(|(x, y, w, h)| format!("\t{x},{y} {w}x{h}")).unwrap_or_default();
                 format!("recording\t{}{area}", if *started { "started" } else { "ended" })
             }
             Request::RecordingStop => "recording_stop\t".into(),
+            Request::ReloadConfig => "reload_config\t".into(),
+            Request::Action { name } => format!("action\t{name}"),
+            Request::Find { mode, pick, text } => format!("find\t{mode}\t{}\t{}", u8::from(*pick), text.replace(['\t', '\n'], " ")),
             Request::RecordingToggle { what } => format!("recording_toggle\t{what}"),
             Request::RecordingAudio => "recording_audio\t".into(),
             Request::RecordingState => "recording_state\t".into(),
             Request::RecordingMenu => "recording_menu\t".into(),
             Request::WatchRecording => "watch_recording\t".into(),
             Request::Subscribe { kinds } => format!("subscribe\t{}", kinds.join(",")),
+            Request::Pointer(op) => format!("pointer\t{}", op.encode()),
         }
     }
 
@@ -620,6 +745,11 @@ impl Request {
             "scratchpad_show" => Some(Request::ScratchpadShow),
             "watch_scratchpad" => Some(Request::WatchScratchpad),
             "dock_show" => Some(Request::DockShow { output: (!rest.is_empty()).then(|| rest.to_string()) }),
+            "dock_take" => Some(Request::DockTake { tile: rest.parse().ok()? }),
+            "dock_pin" => {
+                let (tile, output) = rest.split_once('\t').unwrap_or((rest, ""));
+                Some(Request::DockPin { tile: tile.parse().ok()?, output: (!output.is_empty()).then(|| output.to_string()) })
+            }
             "watch_dock" => Some(Request::WatchDock { output: (!rest.is_empty()).then(|| rest.to_string()) }),
             "recording" => {
                 let (state, area) = rest.split_once('\t').unwrap_or((rest, ""));
@@ -631,6 +761,18 @@ impl Request {
                 Some(Request::Recording { started, area: parse_geometry(area) })
             }
             "recording_stop" => Some(Request::RecordingStop),
+            "reload_config" => Some(Request::ReloadConfig),
+            "action" => (!rest.is_empty()).then(|| Request::Action { name: rest.into() }),
+            "find" => {
+                let mut parts = rest.splitn(3, '\t');
+                let mode = parts.next().filter(|m| matches!(*m, "apps" | "windows" | "files"))?;
+                let pick = match parts.next()? {
+                    "1" => true,
+                    "0" => false,
+                    _ => return None,
+                };
+                Some(Request::Find { mode: mode.into(), pick, text: parts.next().unwrap_or_default().into() })
+            }
             "recording_toggle" => matches!(rest, "region" | "tile" | "screen").then(|| Request::RecordingToggle { what: rest.into() }),
             "recording_audio" => Some(Request::RecordingAudio),
             "recording_state" => Some(Request::RecordingState),
@@ -639,6 +781,7 @@ impl Request {
             "subscribe" => Some(Request::Subscribe {
                 kinds: rest.split(',').map(str::trim).filter(|k| !k.is_empty()).map(String::from).collect(),
             }),
+            "pointer" => PointerOp::decode(rest).map(Request::Pointer),
             _ => None,
         }
     }
@@ -758,12 +901,19 @@ mod tests {
             Request::WatchScratchpad,
             Request::DockShow { output: None },
             Request::DockShow { output: Some("DP-1".into()) },
+            Request::DockTake { tile: 5 },
+            Request::DockPin { tile: 5, output: None },
+            Request::DockPin { tile: 7, output: Some("DP-1".into()) },
             Request::WatchDock { output: None },
             Request::WatchDock { output: Some("HDMI-A-1".into()) },
             Request::Recording { started: true, area: None },
             Request::Recording { started: true, area: Some((-10, 20, 300, 40)) },
             Request::Recording { started: false, area: None },
             Request::RecordingStop,
+            Request::ReloadConfig,
+            Request::Action { name: "desk_3".into() },
+            Request::Find { mode: "apps".into(), pick: true, text: "fire fox".into() },
+            Request::Find { mode: "windows".into(), pick: false, text: String::new() },
             Request::RecordingToggle { what: "tile".into() },
             Request::RecordingAudio,
             Request::RecordingState,
@@ -771,8 +921,19 @@ mod tests {
             Request::WatchRecording,
             Request::Subscribe { kinds: vec![] },
             Request::Subscribe { kinds: vec!["window".into(), "desktop".into()] },
+            Request::Pointer(PointerOp::Move { x: 1280, y: -5, output: Some("HDMI-A-1".into()) }),
+            Request::Pointer(PointerOp::Move { x: 10, y: 20, output: None }),
+            Request::Pointer(PointerOp::By { dx: -3, dy: 4 }),
+            Request::Pointer(PointerOp::Click(MouseButton::Right)),
+            Request::Pointer(PointerOp::Press(MouseButton::Left)),
+            Request::Pointer(PointerOp::Release(MouseButton::Middle)),
+            Request::Pointer(PointerOp::Where),
         ];
         assert_eq!(Request::decode("recording_toggle\twindow"), None);
+        assert_eq!(Request::decode("dock_take\t"), None);
+        assert_eq!(Request::decode("find\tjump\t0\tx"), None);
+        assert_eq!(Request::decode("find\tapps\tyes\tx"), None);
+        assert_eq!(Request::decode("dock_pin\t3"), Some(Request::DockPin { tile: 3, output: None }));
         for req in reqs {
             assert_eq!(Request::decode(&req.encode()), Some(req));
         }
@@ -857,6 +1018,12 @@ mod tests {
         assert_eq!(r.with(":m"), None);
         assert_eq!(r.with(":d"), None);
         assert_eq!(r.with(":d0"), None);
+        let side = |side| Some(Dest { place: Place::Side(side), ..r });
+        assert_eq!(r.with(":left"), side(Side::Left));
+        assert_eq!(r.with(":Right"), side(Side::Right));
+        assert_eq!(r.with(":above"), side(Side::Up));
+        assert_eq!(r.with(":below"), side(Side::Down));
+        assert_eq!(Dest { tab: true, ..r }.with(":up"), side(Side::Up));
         assert_eq!(r.with(":x"), None);
         assert_eq!(
             Dest { desk: Some(2), ..r }.label(),
@@ -871,6 +1038,7 @@ mod tests {
         assert_eq!(Request::decode("unswallow\t2"), None);
         assert_eq!(Request::decode("launch\tz,0,,\t\t\t0\tx"), None);
         assert_eq!(Request::decode("goto\t"), None);
+        assert_eq!(Request::decode("action\t"), None);
         assert_eq!(Request::decode("unlock\t"), None);
         assert_eq!(Request::decode("tile_action\t3\tprivate_desktop"), None);
         assert_eq!(Request::decode("tile_action\t3\tsend_to_desk_0"), None);
@@ -880,7 +1048,7 @@ mod tests {
     #[test]
     fn tile_actions_have_their_config_names() {
         let all = TileAction::all();
-        assert_eq!(all.len(), 18);
+        assert_eq!(all.len(), 19);
         for action in all {
             assert_eq!(TileAction::parse(&action.code()), Some(action));
         }
@@ -888,6 +1056,7 @@ mod tests {
         assert_eq!(TileAction::SendToDesk(3).label(), "Send to desktop 3");
         assert_eq!(TileAction::Scratchpad.code(), "send_to_scratchpad");
         assert_eq!(TileAction::Mute.code(), "mute_tile");
+        assert_eq!(TileAction::parse("sticky"), Some(TileAction::Sticky));
         assert_eq!(TileAction::parse("bogus"), None);
     }
 

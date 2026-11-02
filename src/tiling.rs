@@ -32,12 +32,6 @@ use crate::{
     state::{Dune, Tile},
 };
 
-/// Space around and between columns; the focus border is drawn inside it. Tiles inside
-/// a column are only `BORDER` apart, so neighbours share one border line.
-pub const GAP: i32 = 6;
-pub const BORDER: i32 = 1;
-/// How long a resize by keys or wheel takes to slide from the old size to the new one.
-const RESIZE_ANIMATION: Duration = Duration::from_millis(150);
 /// A size sent to a client that has not drawn it after this long no longer holds back
 /// the next one (a client that never answers must not freeze its size).
 const CONFIGURE_WAIT: Duration = Duration::from_millis(150);
@@ -113,7 +107,8 @@ impl Dune {
         }
     }
 
-    /// Mod+v / Mod+s / Mod+Shift+t: a terminal to the right of the focused tile, below it or
+    /// Mod+v / Mod+s / Mod+Shift+t: a terminal to the right of the focused tile, below it
+    /// (or left of it, above it: `terminal_left` / `terminal_above`, no key by default) or
     /// as a new tab of its container (a floating one has no tabs: to its right), in the
     /// folder the focused window's shell is in; without a focused window, where a terminal
     /// opens and in `$HOME`.
@@ -132,6 +127,8 @@ impl Dune {
         }
         let side = match here {
             TerminalHere::Below => Side::Down,
+            TerminalHere::Left => Side::Left,
+            TerminalHere::Above => Side::Up,
             TerminalHere::Right | TerminalHere::Tab => Side::Right,
         };
         self.spawn_terminal(target, Some(side), cwd, None);
@@ -420,7 +417,9 @@ impl Dune {
         let pid = self.client_pid(surface.wl_surface());
         let env = pid.map(process_env).unwrap_or_default();
         let env_tile = env.get("DUNE_TILE").and_then(|v| v.parse::<TileId>().ok());
-        let launch_n = env.get("DUNE_LAUNCH").and_then(|v| v.parse::<u64>().ok()).or_else(|| {
+        // A long-running process (Firefox) keeps the `DUNE_LAUNCH` of its first launch in
+        // every later window: only a launch still waiting counts.
+        let launch_n = env.get("DUNE_LAUNCH").and_then(|v| v.parse::<u64>().ok()).filter(|n| self.launches.contains_key(n)).or_else(|| {
             let pid = pid?;
             self.launches.iter().find(|(_, l)| l.pid.is_some_and(|p| is_descendant(pid, p))).map(|(n, _)| *n)
         });
@@ -601,9 +600,10 @@ impl Dune {
         for t in ended {
             self.fullscreen.remove(&t);
         }
-        // A private tile that closed is forgotten (ids are not reused).
+        // A private tile that closed is forgotten (ids are not reused); a sticky one too.
         let tiles = &self.tiles;
         self.privacy.forget_gone(|t| tiles.contains_key(&t));
+        self.sticky.retain(|t| tiles.contains_key(t));
 
         let tiles = &self.tiles;
         let visible = |id| tiles.get(&id).is_some_and(|t: &Tile| !t.stack.is_empty() || t.reserved);
@@ -624,7 +624,7 @@ impl Dune {
             let Some(area) = self.output_rect(output) else { continue };
             let Some(layout) = self.layouts.get_mut(&output.name()) else { continue };
             tracing::debug!(output = output.name(), ?area, "arranging tiles");
-            let laid_out = layout.geometries(area, GAP, BORDER, &visible, self.focused);
+            let laid_out = layout.geometries(area, self.config.gap, self.config.border_width, self.config.tab_style.height, &visible, self.focused);
             edge_counts.insert(output.name(), past_edges(area, &laid_out));
             for (id, rect) in laid_out {
                 if let Some(part) = rect.intersection(&area) {
@@ -650,8 +650,17 @@ impl Dune {
                     *rect = full;
                 }
             }
+            // Sticky floats stay in front of it.
+            let sticky: Vec<(TileId, Rect)> = shown
+                .iter()
+                .filter(|(t, r)| self.sticky.contains(t) && *t != cover && r.intersection(&full).is_some())
+                .copied()
+                .collect();
             shown.retain(|(t, rect)| *t != cover && rect.intersection(&full).is_none());
             shown.insert(0, (cover, full));
+            for (i, entry) in sticky.into_iter().enumerate() {
+                shown.insert(i, entry);
+            }
             tab_bars.retain(|b| b.rect.intersection(&full).is_none());
             edge_counts.remove(&name);
             covers.insert(name, cover);
@@ -770,7 +779,12 @@ impl Dune {
         }
         let Some(anim) = &self.resize_animation else { return target };
         let Some(from) = anim.from.get(&id) else { return target };
-        let t = anim.start.elapsed().as_secs_f64() / RESIZE_ANIMATION.as_secs_f64();
+        // `animations.resize_ms`; none: already there.
+        let duration = self.config.animations.resize;
+        if duration.is_zero() {
+            return target;
+        }
+        let t = anim.start.elapsed().as_secs_f64() / duration.as_secs_f64();
         lerp_rect(*from, target, ease_out(t))
     }
 
@@ -797,7 +811,7 @@ impl Dune {
             }
             return;
         };
-        if anim.start.elapsed() >= RESIZE_ANIMATION {
+        if anim.start.elapsed() >= self.config.animations.resize {
             self.resize_animation = None;
         }
         self.place_windows();
@@ -917,6 +931,46 @@ impl Dune {
     pub fn focus_output_direction(&mut self, dir: Direction) {
         let Some(from) = self.active_output().map(|o| o.name()) else { return };
         let Some(name) = self.output_next_to(&from, dir) else { return };
+        self.focus_output(name);
+    }
+
+    /// The next monitor after the active one, top to bottom and left to right, after the
+    /// last the first (`focus_monitor_next`; with two: the other one).
+    pub fn focus_output_next(&mut self) {
+        let Some(from) = self.active_output().map(|o| o.name()) else { return };
+        if let Some(name) = self.output_after(&from) {
+            self.focus_output(name);
+        }
+    }
+
+    /// The focused tile to the next monitor (as `focus_monitor_next` counts them), as
+    /// its last column, focused (`move_monitor_next`; with two: the other one).
+    pub fn move_to_output_next(&mut self) {
+        let Some(id) = self.focused.filter(|f| !self.is_floating(*f)) else { return };
+        let Some(output) = self.output_of(id).and_then(|from| self.output_after(&from)) else { return };
+        let last = self.layouts.get(&output).and_then(|l| l.tiles().last().copied());
+        self.move_tile(id, &output, last, Side::Right, true);
+        if let Some((_, rect)) = self.geometries.iter().find(|(t, _)| *t == id) {
+            let center = rect.center();
+            self.warp_pointer(Point::from((center.0 as f64, center.1 as f64)));
+        }
+    }
+
+    /// The monitor after `from`, top to bottom and left to right, after the last the
+    /// first; None with only one.
+    fn output_after(&self, from: &str) -> Option<String> {
+        let mut outputs: Vec<(i32, i32, String)> = (self.space.outputs())
+            .filter_map(|o| self.space.output_geometry(o).map(|g| (g.loc.y, g.loc.x, o.name())))
+            .collect();
+        outputs.sort();
+        let at = outputs.iter().position(|(_, _, name)| name == from)?;
+        let (_, _, name) = outputs.swap_remove((at + 1) % outputs.len());
+        (name != from).then_some(name)
+    }
+
+    /// Focus the monitor `name`: its window focused last (else one shown there), the
+    /// pointer to its middle.
+    fn focus_output(&mut self, name: String) {
         let shown_there = |id: &TileId| {
             self.output_of(*id).as_deref() == Some(name.as_str()) && self.geometries.iter().any(|(t, _)| t == id)
         };
@@ -1191,10 +1245,25 @@ impl Dune {
                 return Some("ok".into());
             }
             Request::DockShow { output } => {
-                self.toggle_dock_keys(output);
+                self.ask_dock(output);
+                return Some("ok".into());
+            }
+            Request::DockTake { tile } => {
+                self.take_from_dock(tile);
+                return Some("ok".into());
+            }
+            Request::DockPin { tile, output } => {
+                self.pin_in_dock(tile, output);
                 return Some("ok".into());
             }
             Request::Recording { started, area } => self.recording_state(started, area.map(|(x, y, w, h)| Rect::new(x, y, w, h))),
+            Request::ReloadConfig => {
+                self.reload_config();
+                return Some("ok".into());
+            }
+            Request::Action { name } => return Some(self.run_named_action(&name).map_or_else(|e| e, |()| "ok".into())),
+            Request::Pointer(op) => return Some(self.pointer_request(op)),
+            Request::Find { mode, pick, text } => return Some(self.find(&mode, pick, &text).map_or_else(|e| e, |()| "ok".into())),
             Request::RecordingStop => {
                 self.stop_recording();
                 return Some("ok".into());

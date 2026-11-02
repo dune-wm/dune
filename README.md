@@ -65,7 +65,7 @@ dune-session    # what the login screen runs: a login shell first, log in
 | `Mod+v` / `Mod+s` | a terminal right of / below the tile |
 | `Mod+r` | cycle the column width |
 | `Mod+Shift+f` | fullscreen |
-| `Mod+Shift+d` / `Mod+Shift+e` | the tile into the dock / show the dock |
+| `Mod+Shift+d` / `Mod+Shift+e` | the tile into the dock / show the dock (dune-shell) |
 | `Mod+1` .. `Mod+9` | show a desktop |
 | `Mod+q` | close the tile |
 
@@ -76,7 +76,7 @@ Every key is listed, and can be rebound, in [Configuration](docs/configuration.m
 | Page | About |
 |---|---|
 | [Windows](docs/windows.md) | the strip, columns, rows and tabs, fullscreen, floats and the scratchpad, desktops and monitors, the mouse |
-| [The dock](docs/dock.md) | tiles put out of the way, pinned entries, the scratchpad cell |
+| [The dock](docs/dock.md) | tiles put out of the way, pinned entries, what dune-shell is told to draw it |
 | [Terminals](docs/terminals.md) | terminals in the folder you work in, `dune-open` |
 | [dune-finder](docs/finder.md) | launcher, window switcher, files, jumps, tile options, system |
 | [Privacy](docs/privacy.md) | private tiles and locked desktops for screen sharing |

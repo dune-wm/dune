@@ -1,0 +1,60 @@
+#!/bin/sh
+# dune-camera [DEVICE]: the webcam in a window of its own (app id `dune-camera`), mirrored,
+# with as little delay as mpv can. Run again: it closes. A `[[rules]]` entry with
+# `actions = ["sticky"]` makes dune keep it small, in front of everything, on every desktop.
+#
+# DEVICE: a v4l2 device (default: the first one that captures video, else /dev/video0).
+# DUNE_CAMERA_SIZE (default 1280x720) and DUNE_CAMERA_MIRROR=0 change what it shows.
+# The picture fills the window whatever its shape, cropping what does not fit (resize the
+# float to a square or a strip to frame just your face); DUNE_CAMERA_CROP=0 letterboxes instead.
+
+app_id=dune-camera
+
+# Again: close the one open.
+# (mpv's command line starts so: only it matches, not a shell that mentions it.)
+running="^mpv --wayland-app-id=$app_id( |\$)"
+if pgrep -f -- "$running" >/dev/null 2>&1; then
+    pkill -f -- "$running"
+    exit 0
+fi
+
+device=$1
+if [ -z "$device" ]; then
+    for d in /dev/video*; do
+        [ -e "$d" ] || continue
+        if ! command -v v4l2-ctl >/dev/null 2>&1 || v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -q "Video Capture"; then
+            device=$d
+            break
+        fi
+    done
+fi
+if [ -z "$device" ] || [ ! -e "$device" ]; then
+    notify-send --app-name dune-camera "No camera" "No video device found (/dev/video*)" 2>/dev/null
+    echo "dune-camera: no camera found" >&2
+    exit 1
+fi
+
+size=${DUNE_CAMERA_SIZE:-1280x720}
+mirror=--vf=hflip
+[ "${DUNE_CAMERA_MIRROR:-1}" = 0 ] && mirror=
+crop=--panscan=1.0
+[ "${DUNE_CAMERA_CROP:-1}" = 0 ] && crop=
+
+exec mpv \
+    --wayland-app-id="$app_id" \
+    --title=Camera \
+    --profile=low-latency \
+    --untimed \
+    --cache=no \
+    --demuxer-lavf-o=input_format=mjpeg,video_size="$size" \
+    --no-osc \
+    --no-input-default-bindings \
+    --input-conf=/dev/null \
+    --no-audio \
+    --keepaspect-window=no \
+    --border=no \
+    --idle=no \
+    --really-quiet \
+    $mirror \
+    $crop \
+    "av://v4l2:$device"
