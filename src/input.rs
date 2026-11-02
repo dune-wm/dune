@@ -955,6 +955,8 @@ impl Dune {
                 self.pointer_button(event.button_code(), event.state(), event.time());
             }
             InputEvent::PointerAxis { event, .. } => {
+                // Shift+wheel scrolls sideways, Mod+wheel slides the strip: not a hold.
+                self.mod_hold_button();
                 let source = event.source();
 
                 let horizontal_amount = event

@@ -1,6 +1,7 @@
 //! Mod, or Shift, held alone, with no other key or button, for `HOLD`: subscribers hear
-//! `mod` `start` (`dune events mod`) with the `keys` held; let go, `end`; another key or a
-//! button meanwhile, `cancel` (it was a shortcut, or a capital letter, after all).
+//! `mod` `start` (`dune events mod`) with the `keys` held; let go, `end`; another key, a
+//! button or the wheel meanwhile, `cancel` (it was a shortcut, a capital letter or a
+//! sideways scroll, after all).
 //! dune-voice listens for a phrase while Mod is held, and dictates into the focused app
 //! while Shift is. Mod only for a `modifier` that is one key (`super`, `alt`); neither
 //! while the session is locked or a window holds the keys.
@@ -80,7 +81,8 @@ impl ModHold {
         }
     }
 
-    /// A button went down: it was Mod+drag or Shift+click, not a hold.
+    /// A button went down or the wheel turned: it was Mod+drag, Shift+click or
+    /// Shift+scroll, not a hold.
     fn button(&mut self) -> Told {
         self.stop("cancel")
     }
@@ -156,7 +158,7 @@ impl Dune {
         }
     }
 
-    /// A mouse button went down.
+    /// A mouse button went down, or the wheel (or a touchpad) scrolled.
     pub fn mod_hold_button(&mut self) {
         let told = self.mod_hold.button();
         self.tell_mod(told);
@@ -222,6 +224,17 @@ mod tests {
         hold.key(SHIFT, SHIFT, true);
         hold.elapsed(hold.press);
         assert_eq!(hold.button(), Some(("cancel", Keys::Shift)));
+    }
+
+    #[test]
+    fn a_scroll_before_the_time_is_up_is_no_hold() {
+        // Shift+wheel, a sideways scroll: the wheel turns before `HOLD`.
+        let mut hold = ModHold::default();
+        hold.key(SHIFT, SHIFT, true);
+        let press = hold.press;
+        assert_eq!(hold.button(), None);
+        assert_eq!(hold.elapsed(press), None);
+        assert_eq!(hold.key(SHIFT, None, false).told, None);
     }
 
     #[test]
