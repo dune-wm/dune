@@ -100,6 +100,8 @@ pub struct Dune {
     pub sticky: HashSet<TileId>,
     /// By output: the fullscreen tile covering it now (laid out on its shown desktop).
     pub covers: HashMap<String, TileId>,
+    /// The last-mile zoom, while on (`crate::zoom`): one tile (or monitor) magnified.
+    pub zoom: Option<crate::zoom::Zoom>,
     /// What the pointer is doing: pointing, or a Mod+drag (`crate::seatop`).
     pub seatop: crate::seatop::Seatop,
     /// Floating tiles of each output, by output name, back to front.
@@ -404,6 +406,7 @@ impl Dune {
             subscribers: Vec::new(),
             last_snapshot: Default::default(),
             asked_events: Vec::new(),
+            zoom: None,
             told_motion: None,
             mod_hold: Default::default(),
             scratchpad_status: String::new(),

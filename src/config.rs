@@ -137,6 +137,8 @@
 //! sticky = "none"                     # the focused tile floats in front of all, on every desktop (again: off)
 //! dock = "mod+shift+d"                # the focused tile (with its tabs) into the dock of its desktop
 //! minimap = "mod+a"                  # dune-shell's minimap of the active monitor (again: hide it)
+//! zoom = "mod+z"                      # the tile under the pointer magnified 3x around it (again: click there)
+//! zoom_out = "mod+shift+z"            # out of the zoom without a click
 //! dock_show = "mod+shift+e"           # dune-shell shows the dock of the active monitor (again: hides it)
 //! terminal_vertical = "mod+v"         # a terminal right of the tile, in its folder
 //! terminal_horizontal = "mod+s"       # one below it
@@ -375,6 +377,10 @@ pub enum Binding {
     DockShow,
     /// Ask the bar (dune-shell) to show or hide the minimap of the active monitor.
     Minimap,
+    /// Magnify the tile under the pointer around it (`crate::zoom`); again: click there.
+    Zoom,
+    /// Out of the zoom without a click.
+    ZoomOut,
     Terminal(TerminalHere),
     StackToTabs,
     Quit,
@@ -445,6 +451,8 @@ fn binding_table() -> Vec<(String, Binding, String)> {
         ("dock", Dock, "mod+shift+d"),
         ("dock_show", DockShow, "mod+shift+e"),
         ("minimap", Minimap, "mod+a"),
+        ("zoom", Zoom, "mod+z"),
+        ("zoom_out", ZoomOut, "mod+shift+z"),
         ("terminal_vertical", Terminal(TerminalHere::Right), "mod+v"),
         ("terminal_horizontal", Terminal(TerminalHere::Below), "mod+s"),
         ("terminal_tab", Terminal(TerminalHere::Tab), "none"),

@@ -52,7 +52,7 @@ dune recording menu                      # the recording panel, or stop the reco
 dune recording region | tile | screen     # record that, or stop the recording running
 dune recording audio                     # turn recording the microphone on or off
 dune recording stop | watch
-dune events [window,desktop,output,strip,minimap,dock,mod,pointer]  # a JSON line per change, until dune goes away
+dune events [window,desktop,output,strip,minimap,dock,mod,pointer,zoom]  # a JSON line per change, until dune goes away
 dune goto TILE                           # show that window and focus it
 dune action NAME                         # what the key of that name in [keys] does
 dune pointer move X Y [OUTPUT]           # the pointer there (from OUTPUT's corner, else the layout's)
@@ -112,6 +112,15 @@ in it (`tile_x`, `tile_y`, from its corner) and its size (`tile_w`, `tile_h`): a
 keeps its place in its window while the strip slides, and dune-eye-tracker learns from
 that. Tiles of locked desktops say none. A `move` line is the mouse moving the pointer
 (not `dune pointer`), a few times a second at most.
+
+The `zoom` key (`Mod+z`) magnifies the tile under the pointer 3x around the pointer (the
+whole monitor when it is over none); the rest of the monitor stays as it is. Only what is
+drawn changes: the pointer moves and clicks in real coordinates. The key again clicks where
+the pointer is, and any click goes back out (`zoom_out`, `Mod+Shift+z`: out without one).
+A `zoom` line tells it, `in` with the center (`x`, `y`), the `scale` and the area drawn
+(`area_x` .. `area_h`, the tile's rectangle, `tile`), then `out`; a point p is seen at
+center + (p − center)·scale. A click while zoomed also says where it was seen (`zoom_x`,
+`zoom_y`, `zoom_scale`): that is where the eyes were. `zoom` lines only come when asked for.
 
 A `strip` line tells the strip of tiles a monitor shows whenever it changes (a tile
 opens, closes or resizes, the view slides): each tile's rectangle along the strip and

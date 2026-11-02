@@ -39,6 +39,7 @@ mod winit;
 mod wlr_screencopy;
 mod workspaces;
 mod xwayland;
+mod zoom;
 
 use std::path::{Path, PathBuf};
 
@@ -64,7 +65,7 @@ usage:
   dune recording audio                   turn recording the microphone on or off
   dune recording stop|watch              stop the recording running / print a waybar JSON line
                                          on every change (with the time recorded)
-  dune events [window,desktop,output,strip,minimap,dock,mod,pointer]
+  dune events [window,desktop,output,strip,minimap,dock,mod,pointer,zoom]
                                          print a JSON line for every change, until dune goes away
   dune goto TILE                         show that window and focus it
   dune action NAME                       do what the key of that name in [keys] does

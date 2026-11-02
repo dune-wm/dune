@@ -84,6 +84,10 @@ enum Action {
     DockShow,
     /// Mod+a: dune-shell's minimap of the active monitor, through `dune events`.
     Minimap,
+    /// Mod+z: the tile under the pointer magnified around it; again: a click there.
+    Zoom,
+    /// Mod+Shift+z: out of the zoom without a click.
+    ZoomOut,
     /// Mod+v / Mod+s / Mod+Shift+t: a terminal to the right of the focused tile, below it
     /// or as a tab of its container, in its folder.
     Terminal(TerminalHere),
@@ -153,6 +157,8 @@ impl From<Binding> for Action {
             Binding::Dock => Action::Dock,
             Binding::DockShow => Action::DockShow,
             Binding::Minimap => Action::Minimap,
+            Binding::Zoom => Action::Zoom,
+            Binding::ZoomOut => Action::ZoomOut,
             Binding::Terminal(here) => Action::Terminal(here),
             Binding::StackToTabs => Action::StackToTabs,
             Binding::Quit => Action::Quit,
@@ -592,6 +598,8 @@ impl Dune {
             }
             Action::DockShow => self.ask_dock(None),
             Action::Minimap => self.ask_minimap(),
+            Action::Zoom => self.zoom_key(),
+            Action::ZoomOut => self.zoom_out(),
             Action::Focus(dir) => self.focus_direction(dir),
             Action::FocusMonitor(dir) => self.focus_output_direction(dir),
             Action::FocusMonitorNext => self.focus_output_next(),
@@ -801,6 +809,9 @@ impl Dune {
         // `dune events pointer` (dune-eye-tracker learns from where you click): not while locked.
         if button_state == ButtonState::Pressed {
             self.tell_click(button, pointer.current_location());
+            // A click while zoomed (the mouse, a voice, the `zoom` key again) is where it
+            // was meant to be: back out. The click goes on, in real coordinates as ever.
+            self.zoom_out();
         }
 
         // A click away from dune-finder closes it, and goes no further.

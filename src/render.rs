@@ -89,9 +89,14 @@ render_elements! {
     RoundedClosing=Rounded<TextureRenderElement<GlesTexture>>,
 }
 
-/// What an output shows, in its own pixels: the scene, laid out in logical pixels, scaled
-/// by the output's `scale` (1: as it is).
-pub type ScaledElements = RescaleRenderElement<OutputRenderElements>;
+render_elements! {
+    /// What an output shows, in its own pixels: the scene, laid out in logical pixels,
+    /// scaled by the output's `scale` (1: as it is); while zoomed (`crate::zoom`), in front of
+    /// it the scene magnified around the pointer, cut to the zoomed tile.
+    pub ScaledElements<=GlesRenderer>;
+    Plain=RescaleRenderElement<OutputRenderElements>,
+    Zoomed=CropRenderElement<RescaleRenderElement<OutputRenderElements>>,
+}
 
 /// Buffers behind the decorations, kept between frames so unchanged ones cause no damage.
 #[derive(Default)]
@@ -381,10 +386,34 @@ impl Dune {
     /// Everything to draw on `output`, front first, in its pixels.
     pub fn output_elements(&mut self, renderer: &mut GlesRenderer, output: &Output, with_pointer: bool) -> Vec<ScaledElements> {
         let scale = output.current_scale().fractional_scale();
-        self.scene_elements(renderer, output, with_pointer)
-            .into_iter()
-            .map(|e| RescaleRenderElement::from_element(e, (0, 0).into(), scale))
-            .collect()
+        // Called for every frame: a resize sliding into place moves on.
+        self.step_resize_animation();
+        let mut elements = Vec::new();
+        // Zoomed: the scene again, magnified around the pointer and cut to the tile, in
+        // front (a second copy of the scene's elements, only while zoomed).
+        if let Some(zoom) = self.zoom_of(&output.name()).cloned()
+            && !self.session_lock.is_locked()
+        {
+            let z = zoom.scale as f64;
+            let origin = crate::zoom::origin(zoom.center, scale, z);
+            let a = zoom.area;
+            let crop: Rectangle<i32, Physical> = Rectangle::new(
+                ((a.x as f64 * scale).round() as i32, (a.y as f64 * scale).round() as i32).into(),
+                ((a.w as f64 * scale).round() as i32, (a.h as f64 * scale).round() as i32).into(),
+            );
+            for e in self.scene_elements(renderer, output, with_pointer) {
+                let magnified = RescaleRenderElement::from_element(e, origin, scale * z);
+                if let Some(cut) = CropRenderElement::from_element(magnified, Scale::from(1.0), crop) {
+                    elements.push(ScaledElements::Zoomed(cut));
+                }
+            }
+        }
+        elements.extend(
+            self.scene_elements(renderer, output, with_pointer)
+                .into_iter()
+                .map(|e| ScaledElements::Plain(RescaleRenderElement::from_element(e, (0, 0).into(), scale))),
+        );
+        elements
     }
 
     /// Everything on `output`, front first, in logical pixels (as if its scale were 1).
@@ -394,8 +423,6 @@ impl Dune {
         output: &Output,
         with_pointer: bool,
     ) -> Vec<OutputRenderElements> {
-        // Called for every frame: a resize sliding into place moves on.
-        self.step_resize_animation();
         // Locked: the lock surface over black, nothing of the session.
         if self.session_lock.is_locked() {
             return self.lock_elements(renderer, output, with_pointer);
