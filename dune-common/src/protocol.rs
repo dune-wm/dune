@@ -493,6 +493,8 @@ pub enum PointerOp {
     Release(MouseButton),
     /// Where it is: answered `x y output`.
     Where,
+    /// The window under it scrolled `dy` pixels (down when positive), as a touchpad would.
+    Scroll { dy: i32 },
 }
 
 impl PointerOp {
@@ -504,6 +506,7 @@ impl PointerOp {
             PointerOp::Press(b) => format!("press\t{}", b.name()),
             PointerOp::Release(b) => format!("release\t{}", b.name()),
             PointerOp::Where => "where".into(),
+            PointerOp::Scroll { dy } => format!("scroll\t{dy}"),
         }
     }
 
@@ -520,6 +523,7 @@ impl PointerOp {
             ["press", b] => MouseButton::parse(b).map(PointerOp::Press),
             ["release", b] => MouseButton::parse(b).map(PointerOp::Release),
             ["where"] => Some(PointerOp::Where),
+            ["scroll", dy] => Some(PointerOp::Scroll { dy: dy.parse().ok()? }),
             _ => None,
         }
     }
@@ -924,6 +928,7 @@ mod tests {
             Request::Pointer(PointerOp::Move { x: 1280, y: -5, output: Some("HDMI-A-1".into()) }),
             Request::Pointer(PointerOp::Move { x: 10, y: 20, output: None }),
             Request::Pointer(PointerOp::By { dx: -3, dy: 4 }),
+            Request::Pointer(PointerOp::Scroll { dy: -40 }),
             Request::Pointer(PointerOp::Click(MouseButton::Right)),
             Request::Pointer(PointerOp::Press(MouseButton::Left)),
             Request::Pointer(PointerOp::Release(MouseButton::Middle)),

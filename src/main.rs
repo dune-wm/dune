@@ -68,7 +68,7 @@ usage:
                                          print a JSON line for every change, until dune goes away
   dune goto TILE                         show that window and focus it
   dune action NAME                       do what the key of that name in [keys] does
-  dune pointer move X Y [OUTPUT] | by DX DY | click|press|release [left|right|middle] | where
+  dune pointer move X Y [OUTPUT] | by DX DY | scroll DY | click|press|release [left|right|middle] | where
                                          move the pointer (from OUTPUT's corner, else the
                                          layout's) or press its buttons, as a mouse would
   dune find [--pick] [apps|windows|files] TEXT

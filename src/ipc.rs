@@ -128,7 +128,7 @@ pub fn action_command(args: &[String]) -> Result<(), String> {
 /// tracker, a voice, a script); `where` prints `x y output`.
 pub fn pointer_command(args: &[String]) -> Result<(), String> {
     use dune_common::protocol::{MouseButton, PointerOp};
-    const USAGE: &str = "usage: dune pointer move X Y [OUTPUT] | by DX DY | click|press|release [left|right|middle] | where";
+    const USAGE: &str = "usage: dune pointer move X Y [OUTPUT] | by DX DY | scroll DY | click|press|release [left|right|middle] | where";
     let num = |s: &str| s.parse::<i32>().map_err(|_| format!("not a number: `{s}`\n{USAGE}"));
     let button = |b: Option<&str>| match b {
         None => Ok(MouseButton::Left),
@@ -139,6 +139,7 @@ pub fn pointer_command(args: &[String]) -> Result<(), String> {
         ["move", x, y] => PointerOp::Move { x: num(x)?, y: num(y)?, output: None },
         ["move", x, y, output] => PointerOp::Move { x: num(x)?, y: num(y)?, output: Some(output.into()) },
         ["by", dx, dy] => PointerOp::By { dx: num(dx)?, dy: num(dy)? },
+        ["scroll", dy] => PointerOp::Scroll { dy: num(dy)? },
         ["click", ref b @ ..] if b.len() <= 1 => PointerOp::Click(button(b.first().copied())?),
         ["press", ref b @ ..] if b.len() <= 1 => PointerOp::Press(button(b.first().copied())?),
         ["release", ref b @ ..] if b.len() <= 1 => PointerOp::Release(button(b.first().copied())?),

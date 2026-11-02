@@ -53,6 +53,7 @@ dune goto TILE                           # show that window and focus it
 dune action NAME                         # what the key of that name in [keys] does
 dune pointer move X Y [OUTPUT]           # the pointer there (from OUTPUT's corner, else the layout's)
 dune pointer by DX DY                    # the pointer moved by that much (on against a side edge: the strip slides, as a mouse pushing it)
+dune pointer scroll DY                   # the window under the pointer scrolled DY px (down when positive), as a touchpad
 dune pointer click|press|release [left|right|middle]  # a button, as a mouse would (left by default)
 dune pointer where                       # where the pointer is: x y output
 dune find [--pick] [apps|windows|files] TEXT  # dune-finder with TEXT typed in (--pick: its first row)

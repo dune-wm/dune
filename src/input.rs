@@ -736,6 +736,22 @@ impl Dune {
                 let state = if matches!(op, PointerOp::Press(_)) { ButtonState::Pressed } else { ButtonState::Released };
                 self.pointer_button(code(b), state, InputTime::now());
             }
+            PointerOp::Scroll { dy } => {
+                // Smooth, in pixels, as a touchpad's (an eye tracker's head tilt), to what is
+                // under the pointer now (the layout may have moved under it).
+                self.idle_notifier_state.notify_activity(&self.seat);
+                let pointer = self.seat.get_pointer().unwrap();
+                if !pointer.is_grabbed() {
+                    let under = self.surface_under(here);
+                    if under.as_ref().map(|(s, _)| s) != pointer.current_focus().as_ref() {
+                        let event = MotionEvent { location: here, serial: SERIAL_COUNTER.next_serial(), time: InputTime::now() };
+                        pointer.motion(self, under, &event);
+                    }
+                }
+                let frame = AxisFrame::new(InputTime::now()).source(AxisSource::Continuous).value(Axis::Vertical, dy as f64);
+                pointer.axis(self, frame);
+                pointer.frame(self);
+            }
             PointerOp::Where => {
                 let output = (self.space.outputs())
                     .find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(here)))
