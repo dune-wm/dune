@@ -21,7 +21,7 @@ enum Kind {
 
 /// The settings `get` and `set` know (`table.key` for those in a table), with what they
 /// take and their default.
-const LOOK: [(&str, Kind, &str); 16] = [
+const LOOK: [(&str, Kind, &str); 17] = [
     ("border_color", Kind::Color { none: true }, "#ffffff"),
     ("focus_color", Kind::Color { none: true }, "#5c9ef2"),
     ("background_color", Kind::Color { none: false }, "#14141a"),
@@ -36,6 +36,7 @@ const LOOK: [(&str, Kind, &str); 16] = [
     ("tabs.inactive_text", Kind::Color { none: false }, "#9096a4"),
     ("animations.enabled", Kind::Bool, "true"),
     ("animations.resize_ms", Kind::Number(0, 1000), "150"),
+    ("animations.slide_ms", Kind::Number(0, 1000), "280"),
     ("animations.close_ms", Kind::Number(0, 1000), "150"),
     ("animations.close_scale", Kind::Decimal(0.5, 1.0), "0.85"),
 ];

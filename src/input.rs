@@ -1009,7 +1009,7 @@ impl Dune {
                     let pos = self.seat.get_pointer().unwrap().current_location();
                     // A wheel notch jumps 120 px: the tiles glide there instead.
                     if matches!(source, AxisSource::Wheel | AxisSource::WheelTilt) {
-                        self.animate_resize();
+                        self.animate_slide();
                     }
                     self.slide_strip(pos, strip_scroll_dx(source, horizontal_amount, vertical_amount));
                     return;

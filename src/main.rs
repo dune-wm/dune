@@ -80,8 +80,8 @@ usage:
                                          border_width, gap, corner_radius, tabs.height,
                                          tabs.font_size, tabs.background, tabs.active, tabs.text,
                                          tabs.inactive_text, animations.enabled,
-                                         animations.resize_ms, animations.close_ms,
-                                         animations.close_scale
+                                         animations.resize_ms, animations.slide_ms,
+                                         animations.close_ms, animations.close_scale
   dune shell                             run the dune layer around $DUNE_USER_SHELL (what tiles run)";
 
 fn main() {

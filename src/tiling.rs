@@ -39,16 +39,24 @@ const CONFIGURE_WAIT: Duration = Duration::from_millis(150);
 /// How soon after an unclaimed window opens a window of its app closing leaves it its place.
 const REPLACE_WINDOW: Duration = Duration::from_secs(3);
 
-/// A resize sliding into place: where each tile it moves started, and since when.
+/// How a slide moves: for how long and along which curve.
+#[derive(Clone, Copy)]
+pub struct Glide {
+    pub duration: Duration,
+    pub ease: fn(f64) -> f64,
+}
+
+/// A resize sliding into place: where each tile it moves started, since when, and how.
 pub struct ResizeAnimation {
     from: HashMap<TileId, Rect>,
     start: Instant,
+    glide: Glide,
 }
 
 impl ResizeAnimation {
     /// A slide starting now, from where the tiles are drawn (`from`).
-    pub fn from_rects(from: HashMap<TileId, Rect>) -> ResizeAnimation {
-        ResizeAnimation { from, start: Instant::now() }
+    pub fn from_rects(from: HashMap<TileId, Rect>, glide: Glide) -> ResizeAnimation {
+        ResizeAnimation { from, start: Instant::now(), glide }
     }
 }
 
@@ -61,6 +69,12 @@ fn lerp_rect(from: Rect, to: Rect, t: f64) -> Rect {
 /// Ease-out cubic: quick at first, slowing into place.
 pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
+/// Ease-in-out cubic: gathers speed, then settles; no jump on the first frame.
+pub fn ease_in_out(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
 }
 
 /// Where a tile being dragged would go: next to `target` on `side` in `output`'s
@@ -779,22 +793,35 @@ impl Dune {
         }
         let Some(anim) = &self.resize_animation else { return target };
         let Some(from) = anim.from.get(&id) else { return target };
-        // `animations.resize_ms`; none: already there.
-        let duration = self.config.animations.resize;
+        // `animations.resize_ms` or `slide_ms`; none: already there.
+        let Glide { duration, ease } = anim.glide;
         if duration.is_zero() {
             return target;
         }
         let t = anim.start.elapsed().as_secs_f64() / duration.as_secs_f64();
-        lerp_rect(*from, target, ease_out(t))
+        lerp_rect(*from, target, ease(t))
     }
 
     /// Start a resize sliding from where the tiles are drawn now (so repeated keys glide on).
     pub fn animate_resize(&mut self) {
+        self.animate(Glide { duration: self.config.animations.resize, ease: ease_out });
+    }
+
+    /// Start the strip sliding sideways (a focus key, a head turn, a wheel notch): longer and
+    /// eased in, so it does not jump. One caught mid-slide keeps its speed (eases out) instead
+    /// of stopping and starting again.
+    pub fn animate_slide(&mut self) {
+        let duration = self.config.animations.slide;
+        let moving = self.resize_animation.as_ref().is_some_and(|a| a.start.elapsed() < a.glide.duration);
+        self.animate(Glide { duration, ease: if moving { ease_out } else { ease_in_out } });
+    }
+
+    fn animate(&mut self, glide: Glide) {
         let from = self.drawn_now();
-        self.resize_animation = Some(ResizeAnimation { from, start: Instant::now() });
+        self.resize_animation = Some(ResizeAnimation::from_rects(from, glide));
         // Waiting for windows: the slide starts when the layout shows.
         if let Some(transaction) = &mut self.transaction {
-            transaction.ask_animation();
+            transaction.ask_animation(glide);
         }
     }
 
@@ -811,7 +838,7 @@ impl Dune {
             }
             return;
         };
-        if anim.start.elapsed() >= self.config.animations.resize {
+        if anim.start.elapsed() >= anim.glide.duration {
             self.resize_animation = None;
         }
         self.place_windows();
@@ -901,6 +928,8 @@ impl Dune {
 
     pub fn focus_direction(&mut self, dir: Direction) {
         if let Some(next) = self.focused.and_then(|from| neighbor(&self.geometries, from, dir)) {
+            // A key (or a head turn) jumps a whole column: the strip glides there instead.
+            self.animate_slide();
             self.focus_tile(next);
         }
     }
@@ -1392,6 +1421,10 @@ mod tests {
         let (from, to) = (Rect::new(0, 0, 500, 600), Rect::new(0, 0, 600, 600));
         assert_eq!(lerp_rect(from, to, ease_out(0.0)), from);
         assert_eq!(lerp_rect(from, to, ease_out(1.0)), to);
+        assert_eq!(lerp_rect(from, to, ease_in_out(0.0)), from);
+        assert_eq!(lerp_rect(from, to, ease_in_out(1.0)), to);
+        // Eased in: barely moved on the first frame, halfway at the middle.
+        assert!(ease_in_out(0.05) < 0.001 && (ease_in_out(0.5) - 0.5).abs() < 1e-9);
         assert_eq!(lerp_rect(from, to, ease_out(2.0)), to);
         // Eased out: more than half the way at half the time.
         assert!(lerp_rect(from, to, ease_out(0.5)).w > 550);

@@ -38,6 +38,7 @@
 //! [animations]
 //! enabled = true              # false: resizes and closes are instant; default true
 //! resize_ms = 150             # ms a resize slides for (0-1000, 0 none); default 150
+//! slide_ms = 280              # ms the strip slides sideways for (a focus key, a head turn, Super+wheel) (0-1000, 0 none); default 280
 //! close_ms = 150              # ms a closing tile shrinks and fades for (0-1000, 0 none); default 150
 //! close_scale = 0.85          # how big a closing tile ends, as a share of its size (0.5-1.0); default 0.85
 //!
@@ -764,6 +765,7 @@ struct KeyboardFile {
 struct AnimationsFile {
     enabled: Option<bool>,
     resize_ms: Option<i64>,
+    slide_ms: Option<i64>,
     close_ms: Option<i64>,
     close_scale: Option<f64>,
 }
@@ -772,6 +774,8 @@ struct AnimationsFile {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Animations {
     pub resize: std::time::Duration,
+    /// The strip sliding sideways to another column.
+    pub slide: std::time::Duration,
     pub close: std::time::Duration,
     /// How big a closing tile is by the end, as a share of its size.
     pub close_scale: f64,
@@ -780,7 +784,7 @@ pub struct Animations {
 impl Default for Animations {
     fn default() -> Self {
         let ms = std::time::Duration::from_millis;
-        Animations { resize: ms(150), close: ms(150), close_scale: 0.85 }
+        Animations { resize: ms(150), slide: ms(280), close: ms(150), close_scale: 0.85 }
     }
 }
 
@@ -800,6 +804,7 @@ fn animations(file: &AnimationsFile) -> Animations {
     };
     Animations {
         resize: ms("animations.resize_ms", file.resize_ms, default.resize),
+        slide: ms("animations.slide_ms", file.slide_ms, default.slide),
         close: ms("animations.close_ms", file.close_ms, default.close),
         close_scale,
     }
@@ -1363,8 +1368,10 @@ mod tests {
         assert_eq!(config("").animations, Animations::default());
         let a = config("[animations]\nresize_ms = 300\nclose_ms = 0\nclose_scale = 0.6\n").animations;
         assert_eq!((a.resize, a.close, a.close_scale), (Duration::from_millis(300), Duration::ZERO, 0.6));
+        let a = config("[animations]\nslide_ms = 400\n").animations;
+        assert_eq!((a.resize, a.slide), (Duration::from_millis(150), Duration::from_millis(400)));
         let a = config("[animations]\nenabled = false\nresize_ms = 300\n").animations;
-        assert_eq!((a.resize, a.close), (Duration::ZERO, Duration::ZERO));
+        assert_eq!((a.resize, a.slide, a.close), (Duration::ZERO, Duration::ZERO, Duration::ZERO));
         let a = config("[animations]\nresize_ms = 5000\nclose_scale = 2.0\n").animations;
         assert_eq!((a.resize, a.close_scale), (Duration::from_millis(150), 0.85));
     }

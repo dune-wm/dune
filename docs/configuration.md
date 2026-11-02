@@ -57,8 +57,9 @@ text = "#d8dce6"               # its title
 inactive_text = "#9096a4"      # the other titles and the "+"
 
 [animations]
-enabled = true                 # false: resizes and closes are instant
-resize_ms = 150                # 0-1000, 0: none
+enabled = true                 # false: resizes, slides and closes are instant
+resize_ms = 150                # a resize; 0-1000, 0: none
+slide_ms = 280                 # the strip sliding to another column (focus key, head turn, Super+wheel); 0-1000, 0: none
 close_ms = 150                 # 0-1000, 0: none
 close_scale = 0.85             # how small a closing tile ends, 0.5-1.0
 

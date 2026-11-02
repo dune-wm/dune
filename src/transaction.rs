@@ -26,7 +26,7 @@ pub struct Transaction {
     waiting: HashSet<ObjectId>,
     started: Instant,
     /// A resize slide was asked for meanwhile: it starts at the end.
-    animate: bool,
+    animate: Option<crate::tiling::Glide>,
 }
 
 impl Transaction {
@@ -35,8 +35,8 @@ impl Transaction {
         self.from.get(&id).copied()
     }
 
-    pub fn ask_animation(&mut self) {
-        self.animate = true;
+    pub fn ask_animation(&mut self, glide: crate::tiling::Glide) {
+        self.animate = Some(glide);
     }
 
 }
@@ -94,7 +94,7 @@ impl Dune {
             Some(transaction) => transaction.waiting.extend(waiting),
             None if !waiting.is_empty() => {
                 tracing::trace!(windows = waiting.len(), "layout waits for its windows");
-                self.transaction = Some(Transaction { from, waiting, started: Instant::now(), animate: false });
+                self.transaction = Some(Transaction { from, waiting, started: Instant::now(), animate: None });
             }
             None => {}
         }
@@ -121,8 +121,8 @@ impl Dune {
         if !transaction.waiting.is_empty() {
             tracing::debug!(windows = transaction.waiting.len(), "layout shown without waiting for every window");
         }
-        if transaction.animate {
-            self.resize_animation = Some(crate::tiling::ResizeAnimation::from_rects(transaction.from));
+        if let Some(glide) = transaction.animate {
+            self.resize_animation = Some(crate::tiling::ResizeAnimation::from_rects(transaction.from, glide));
         }
         true
     }
