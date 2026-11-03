@@ -205,7 +205,7 @@ window's app id (`focus ... app=...`), which helps when writing rules.
 | `shortcuts_inhibit` | `Mod+Shift+Escape` | take dune's keys back from a window holding every key (again: give them) |
 | `dock_show` | `Mod+Shift+e` | dune-shell shows the dock of the active monitor (again: hides it), through `dune events` |
 | `minimap` | `Mod+a` | dune-shell's minimap of the active monitor (again: hide it), through `dune events` |
-| `zoom` | `Mod+z` | the tile under the pointer magnified 3x around it, for the last pixels (an eye tracker's); again: a click there. Any click goes back out |
+| `zoom` | `Mod+z` | the tile under the pointer magnified 3x, in a lens 50 px inside its edges (the real tile in that frame), the pointer in its middle, for the last pixels (an eye tracker's); again: out, and so does any click (the right Ctrl+Shift tap clicks, zoomed or not) |
 | `zoom_out` | `Mod+Shift+z` | out of the zoom without a click |
 | `quit` | none | end the session at once (Log out: dune-finder's System mode) |
 | `screenshot` / `_tile` / `_screen` | `Print` / `Ctrl+Print` / `Shift+Print` | screenshot region / tile / monitor |

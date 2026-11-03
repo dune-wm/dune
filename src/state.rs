@@ -102,6 +102,12 @@ pub struct Dune {
     pub covers: HashMap<String, TileId>,
     /// The last-mile zoom, while on (`crate::zoom`): one tile (or monitor) magnified.
     pub zoom: Option<crate::zoom::Zoom>,
+    /// The zoom just gone out, still shrinking back on screen (render only).
+    pub zoom_leaving: Option<crate::zoom::Zoom>,
+    /// The right Ctrl+Shift tapped alone, the keyboard's left click (`crate::zoom`).
+    pub click_tap: crate::zoom::ClickTap,
+    /// What the next synthetic click is by (`key`: the Ctrl+Shift tap), for its event.
+    pub click_by: &'static str,
     /// What the pointer is doing: pointing, or a Mod+drag (`crate::seatop`).
     pub seatop: crate::seatop::Seatop,
     /// Floating tiles of each output, by output name, back to front.
@@ -407,6 +413,9 @@ impl Dune {
             last_snapshot: Default::default(),
             asked_events: Vec::new(),
             zoom: None,
+            zoom_leaving: None,
+            click_tap: Default::default(),
+            click_by: "",
             told_motion: None,
             mod_hold: Default::default(),
             scratchpad_status: String::new(),

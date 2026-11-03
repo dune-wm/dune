@@ -46,6 +46,9 @@ const RECORDING_FRAME: i32 = 2;
 const DRAGGED_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.45];
 /// Darkens the tile whose options dune-finder shows over it (Mod+/).
 const OPTIONS_COLOR: [f32; 4] = DRAGGED_COLOR;
+/// Darkens what of the zoomed tile the lens does not magnify: the dead frame, and the
+/// real tile showing past the magnified one's edges (premultiplied, translucent).
+const LENS_SHADE: [f32; 4] = [0.0, 0.0, 0.0, 0.45];
 /// Under each tiled window, where its client has not drawn yet (it grew): the dark of a
 /// tab strip, so a resize shows an empty tile instead of what is behind.
 const BACKDROP_COLOR: [f32; 4] = [0x1e as f32 / 255.0, 0x20 as f32 / 255.0, 0x29 as f32 / 255.0, 1.0];
@@ -92,7 +95,7 @@ render_elements! {
 render_elements! {
     /// What an output shows, in its own pixels: the scene, laid out in logical pixels,
     /// scaled by the output's `scale` (1: as it is); while zoomed (`crate::zoom`), in front of
-    /// it the scene magnified around the pointer, cut to the zoomed tile.
+    /// it the scene magnified, the pointer in the middle of the zoomed tile and cut to it.
     pub ScaledElements<=GlesRenderer>;
     Plain=RescaleRenderElement<OutputRenderElements>,
     Zoomed=CropRenderElement<RescaleRenderElement<OutputRenderElements>>,
@@ -118,6 +121,8 @@ pub struct Decorations {
     private: HashMap<TileId, SolidColorBuffer>,
     /// Top, bottom, left, right edges of the frame around what is being recorded.
     recording: [SolidColorBuffer; 4],
+    /// Top, bottom, left, right of the shade around the zoom's lens (`crate::zoom`).
+    lens: [SolidColorBuffer; 4],
     /// With `corner_radius`, in place of the solid ones above: borders, backdrops (and
     /// glass), private covers, and the drop spot and dragged tile.
     rings: HashMap<TileId, RoundedRect>,
@@ -389,30 +394,61 @@ impl Dune {
         // Called for every frame: a resize sliding into place moves on.
         self.step_resize_animation();
         let mut elements = Vec::new();
-        // Zoomed: the scene again, magnified around the pointer and cut to the tile, in
-        // front (a second copy of the scene's elements, only while zoomed).
-        if let Some(zoom) = self.zoom_of(&output.name()).cloned()
+        let mut shade = Vec::new();
+        // Zoomed: the scene again, magnified with the pointer in the middle of the lens and
+        // cut to it (and to the tile magnified: past its edges the real tile shows), in
+        // front (a second copy of the scene's elements, only while zoomed); the rest of the
+        // tile shaded, under the pointer; growing in, or shrinking back once out.
+        if self.zoom_leaving.as_ref().is_some_and(|z| z.gone()) {
+            self.zoom_leaving = None;
+        }
+        let lens = match (&self.zoom, &self.zoom_leaving) {
+            (Some(z), _) if z.output == output.name() => Some((z.clone(), false)),
+            (_, Some(z)) if z.output == output.name() => Some((z.clone(), true)),
+            _ => None,
+        };
+        if let Some((zoom, leaving)) = lens
             && !self.session_lock.is_locked()
         {
-            let z = zoom.scale as f64;
-            let origin = crate::zoom::origin(zoom.center, scale, z);
-            let a = zoom.area;
-            let crop: Rectangle<i32, Physical> = Rectangle::new(
-                ((a.x as f64 * scale).round() as i32, (a.y as f64 * scale).round() as i32).into(),
-                ((a.w as f64 * scale).round() as i32, (a.h as f64 * scale).round() as i32).into(),
-            );
-            for e in self.scene_elements(renderer, output, with_pointer) {
-                let magnified = RescaleRenderElement::from_element(e, origin, scale * z);
-                if let Some(cut) = CropRenderElement::from_element(magnified, Scale::from(1.0), crop) {
-                    elements.push(ScaledElements::Zoomed(cut));
+            let (z, along) = zoom.drawn_scale(leaving);
+            if let Some(origin) = crate::zoom::origin(zoom.center, scale, z).filter(|_| z > 1.001) {
+                let b = zoom.bounds;
+                let near = zoom.center + (Point::<f64, Logical>::from((b.x as f64, b.y as f64)) - zoom.center).upscale(z);
+                let magnified = Rect::new(near.x.floor() as i32, near.y.floor() as i32, (b.w as f64 * z).ceil() as i32, (b.h as f64 * z).ceil() as i32);
+                if let Some(a) = zoom.area.intersection(&magnified) {
+                    let crop: Rectangle<i32, Physical> = Rectangle::new(
+                        ((a.x as f64 * scale).round() as i32, (a.y as f64 * scale).round() as i32).into(),
+                        ((a.w as f64 * scale).round() as i32, (a.h as f64 * scale).round() as i32).into(),
+                    );
+                    for (buffer, (x, y, w, h)) in self.decorations.lens.iter_mut().zip(frame_around(zoom.bounds, a)) {
+                        if w <= 0 || h <= 0 {
+                            continue;
+                        }
+                        buffer.update((w, h), LENS_SHADE);
+                        let part = SolidColorRenderElement::from_buffer(buffer, (x, y), 1.0, along as f32, Kind::Unspecified);
+                        shade.push(ScaledElements::Plain(RescaleRenderElement::from_element(
+                            OutputRenderElements::Solid(part),
+                            (0, 0).into(),
+                            scale,
+                        )));
+                    }
+                    for e in self.scene_elements(renderer, output, with_pointer) {
+                        let magnified = RescaleRenderElement::from_element(e, origin, scale * z);
+                        if let Some(cut) = CropRenderElement::from_element(magnified, Scale::from(1.0), crop) {
+                            elements.push(ScaledElements::Zoomed(cut));
+                        }
+                    }
                 }
             }
         }
-        elements.extend(
-            self.scene_elements(renderer, output, with_pointer)
-                .into_iter()
-                .map(|e| ScaledElements::Plain(RescaleRenderElement::from_element(e, (0, 0).into(), scale))),
-        );
+        // The shade goes under the pointer: it stays as bright in the frame as anywhere.
+        let plain = |e| ScaledElements::Plain(RescaleRenderElement::from_element(e, (0, 0).into(), scale));
+        if !shade.is_empty() && with_pointer {
+            elements.extend(self.pointer_elements(renderer, output).into_iter().map(plain));
+        }
+        let pointer_in_scene = with_pointer && shade.is_empty();
+        elements.append(&mut shade);
+        elements.extend(self.scene_elements(renderer, output, pointer_in_scene).into_iter().map(plain));
         elements
     }
 
@@ -771,6 +807,18 @@ fn rounded_image(e: MemoryRenderBufferRenderElement<GlesRenderer>, shaders: &Sha
     }
 }
 
+/// Top, bottom, left, right of what is in `outer` but not in `inner` (inside it), as
+/// rectangles; one with nothing there is empty (a side of 0 or less).
+fn frame_around(outer: Rect, inner: Rect) -> [(i32, i32, i32, i32); 4] {
+    let (inner_bottom, inner_right) = (inner.y + inner.h, inner.x + inner.w);
+    [
+        (outer.x, outer.y, outer.w, inner.y - outer.y),
+        (outer.x, inner_bottom, outer.w, outer.y + outer.h - inner_bottom),
+        (outer.x, inner.y, inner.x - outer.x, inner.h),
+        (inner_right, inner.y, outer.x + outer.w - inner_right, inner.h),
+    ]
+}
+
 /// The four edges, `b` pixels thick, of a border around `rect` (a tile's: inside the gap).
 fn border_edges(rect: Rect, b: i32) -> [(i32, i32, i32, i32); 4] {
     [
@@ -783,6 +831,14 @@ fn border_edges(rect: Rect, b: i32) -> [(i32, i32, i32, i32); 4] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_shade_is_the_tile_less_the_lens() {
+        let parts = frame_around(Rect::new(0, 0, 100, 80), Rect::new(10, 20, 60, 40));
+        assert_eq!(parts, [(0, 0, 100, 20), (0, 60, 100, 20), (0, 20, 10, 40), (70, 20, 30, 40)]);
+        let area: i32 = parts.iter().map(|(_, _, w, h)| w * h).sum();
+        assert_eq!(area, 100 * 80 - 60 * 40);
+    }
+
     use super::*;
 
     #[test]

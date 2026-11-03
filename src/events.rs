@@ -20,7 +20,7 @@
 //! {"event":"dock","change":"entries","output":"DP-1","entries":[{"tile":3,"app_id":"foot","title":"vim","pinned":false,"tabs":[],"sound":false}],"scratchpad":[{"tile":7,"app_id":"foot","title":"~","sound":false}]}
 //! {"event":"dock","change":"toggle","output":"DP-1"}
 //! {"event":"mod","change":"start"}
-//! {"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}
+//! {"event":"pointer","change":"click","button":"left","by":"mouse","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}
 //! ```
 
 use std::{
@@ -209,6 +209,10 @@ pub enum Event {
         /// `left`, `right`, `middle`; none for `move`.
         #[serde(skip_serializing_if = "str::is_empty")]
         button: &'static str,
+        /// What pressed it: `mouse` (a real button), `key` (the right Ctrl+Shift tap),
+        /// `command` (`dune pointer click`: a voice, a script); none for `move`.
+        #[serde(skip_serializing_if = "str::is_empty")]
+        by: &'static str,
         /// From the top-left corner of `output`, in logical pixels.
         x: i32,
         y: i32,
@@ -239,7 +243,8 @@ pub struct Seen {
     pub zoom_scale: u32,
 }
 
-/// A zoom going in: around (`x`, `y`), magnified `scale` times, drawn inside the area (the
+/// A zoom going in: around (`x`, `y`, the point that stays where it is, chosen so the
+/// pointer is seen in the middle of the area; it may be past its edge), magnified `scale` times, drawn inside the area (the
 /// tile's rectangle, `tile`; the whole monitor without one), all from the monitor's corner:
 /// a point p is seen at center + (p - center)·scale.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -429,9 +434,9 @@ impl Dune {
 
     /// The `minimap` key: subscribers (dune-shell) hear it with the active monitor, after
     /// this turn of the loop. Nobody listening, it does nothing.
-    /// A mouse button pressed at `pos` (layout coordinates): subscribers of `pointer`
-    /// hear which, and where on the monitor there. Nobody listening, it does nothing.
-    pub fn tell_click(&mut self, button: u32, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
+    /// A mouse button pressed at `pos` (layout coordinates) `by` a mouse, a key or a
+    /// command: subscribers of `pointer` hear which, by what, and where on the monitor there. Nobody listening, it does nothing.
+    pub fn tell_click(&mut self, button: u32, by: &'static str, pos: smithay::utils::Point<f64, smithay::utils::Logical>) {
         let name = match button {
             crate::seatop::BTN_LEFT => "left",
             crate::seatop::BTN_RIGHT => "right",
@@ -445,11 +450,12 @@ impl Dune {
         let Some(geo) = self.space.output_geometry(output) else { return };
         let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
         let on = self.on_tile(pos);
-        let seen = self.zoom_of(&output.name()).map(|z| {
-            let at = z.seen((pos.x - geo.loc.x as f64, pos.y - geo.loc.y as f64).into());
-            Seen { zoom_x: at.x.round() as i32, zoom_y: at.y.round() as i32, zoom_scale: z.scale }
+        // seen magnified only where the lens drew it (in the dead frame: the real point)
+        let seen = self.zoom_of(&output.name()).and_then(|z| {
+            let at = z.drawn((pos.x - geo.loc.x as f64, pos.y - geo.loc.y as f64).into())?;
+            Some(Seen { zoom_x: at.x.round() as i32, zoom_y: at.y.round() as i32, zoom_scale: z.scale })
         });
-        self.asked_events.push(Event::Pointer { change: "click", button: name, x, y, output: output.name(), on, seen });
+        self.asked_events.push(Event::Pointer { change: "click", button: name, by, x, y, output: output.name(), on, seen });
     }
 
     /// The tile at `pos` (layout coordinates) and where in it, for a click's event: a tile
@@ -485,7 +491,7 @@ impl Dune {
         let Some(geo) = self.space.output_geometry(output) else { return };
         let (x, y) = ((pos.x - geo.loc.x as f64).round() as i32, (pos.y - geo.loc.y as f64).round() as i32);
         self.told_motion = Some(now);
-        self.asked_events.push(Event::Pointer { change: "move", button: "", x, y, output: output.name(), on: None, seen: None });
+        self.asked_events.push(Event::Pointer { change: "move", button: "", by: "", x, y, output: output.name(), on: None, seen: None });
     }
 
     /// The zoom going in (`Some`) or out: subscribers of `zoom` (dune-eye-tracker maps the
@@ -661,17 +667,23 @@ mod tests {
             serde_json::to_string(&event).unwrap(),
             r#"{"event":"window","change":"new","tile":3,"app_id":"foot","title":"a \"b\"","place":"desk 1"}"#
         );
-        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into(), on: None, seen: None };
+        let event = Event::Pointer { change: "click", button: "left", by: "mouse", x: 812, y: 440, output: "DP-1".into(), on: None, seen: None };
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
-            r#"{"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1"}"#
+            r#"{"event":"pointer","change":"click","button":"left","by":"mouse","x":812,"y":440,"output":"DP-1"}"#
         );
         // while zoomed: where it was seen too
         let seen = Some(Seen { zoom_x: 860, zoom_y: 370, zoom_scale: 3 });
-        let event = Event::Pointer { change: "click", button: "left", x: 820, y: 390, output: "DP-1".into(), on: None, seen };
+        let event = Event::Pointer { change: "click", button: "left", by: "mouse", x: 820, y: 390, output: "DP-1".into(), on: None, seen };
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
-            r#"{"event":"pointer","change":"click","button":"left","x":820,"y":390,"output":"DP-1","zoom_x":860,"zoom_y":370,"zoom_scale":3}"#
+            r#"{"event":"pointer","change":"click","button":"left","by":"mouse","x":820,"y":390,"output":"DP-1","zoom_x":860,"zoom_y":370,"zoom_scale":3}"#
+        );
+        // the right Ctrl+Shift tap: by a key
+        let event = Event::Pointer { change: "click", button: "left", by: "key", x: 1, y: 2, output: "DP-1".into(), on: None, seen: None };
+        assert_eq!(
+            serde_json::to_string(&event).unwrap(),
+            r#"{"event":"pointer","change":"click","button":"left","by":"key","x":1,"y":2,"output":"DP-1"}"#
         );
         assert_eq!(Kind::parse("zoom"), Some(Kind::Zoom));
         let zoom = Some(ZoomIn { x: 800, y: 400, scale: 3, tile: Some(3), area_x: 7, area_y: 7, area_w: 1268, area_h: 1064 });
@@ -683,13 +695,13 @@ mod tests {
         let event = Event::Zoom { change: "out", output: "DP-1".into(), zoom: None };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"zoom","change":"out","output":"DP-1"}"#);
         let on = OnTile { tile: 3, app_id: "foot".into(), tile_x: 200, tile_y: 96, tile_w: 1268, tile_h: 1064 };
-        let event = Event::Pointer { change: "click", button: "left", x: 812, y: 440, output: "DP-1".into(), on: Some(on), seen: None };
+        let event = Event::Pointer { change: "click", button: "left", by: "mouse", x: 812, y: 440, output: "DP-1".into(), on: Some(on), seen: None };
         assert_eq!(
             serde_json::to_string(&event).unwrap(),
-            r#"{"event":"pointer","change":"click","button":"left","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}"#
+            r#"{"event":"pointer","change":"click","button":"left","by":"mouse","x":812,"y":440,"output":"DP-1","tile":3,"app_id":"foot","tile_x":200,"tile_y":96,"tile_w":1268,"tile_h":1064}"#
         );
         assert_eq!(Kind::parse("pointer"), Some(Kind::Pointer));
-        let event = Event::Pointer { change: "move", button: "", x: 5, y: 6, output: "DP-1".into(), on: None, seen: None };
+        let event = Event::Pointer { change: "move", button: "", by: "", x: 5, y: 6, output: "DP-1".into(), on: None, seen: None };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"pointer","change":"move","x":5,"y":6,"output":"DP-1"}"#);
         let event = Event::Desktop { change: "focus", output: "DP-1".into(), desk: 2 };
         assert_eq!(serde_json::to_string(&event).unwrap(), r#"{"event":"desktop","change":"focus","output":"DP-1","desk":2}"#);

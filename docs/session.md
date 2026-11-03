@@ -113,14 +113,26 @@ keeps its place in its window while the strip slides, and dune-eye-tracker learn
 that. Tiles of locked desktops say none. A `move` line is the mouse moving the pointer
 (not `dune pointer`), a few times a second at most.
 
-The `zoom` key (`Mod+z`) magnifies the tile under the pointer 3x around the pointer (the
-whole monitor when it is over none); the rest of the monitor stays as it is. Only what is
-drawn changes: the pointer moves and clicks in real coordinates. The key again clicks where
-the pointer is, and any click goes back out (`zoom_out`, `Mod+Shift+z`: out without one).
-A `zoom` line tells it, `in` with the center (`x`, `y`), the `scale` and the area drawn
-(`area_x` .. `area_h`, the tile's rectangle, `tile`), then `out`; a point p is seen at
+The `zoom` key (`Mod+z`) magnifies the tile under the pointer 3x (the whole monitor when
+it is over none) in a lens: the tile less a 50 px frame on each side (less on a small
+tile), where the real tile shows, a dead zone where the eyes can rest. What the pointer is
+on is in the middle of the lens, even by an edge: the edges come in from the borders an eye
+tracker hardly reaches, and past them the real tile shows through. No border: what of the
+tile the lens does not magnify (the frame, the real tile past its edges) is shaded, the
+pointer bright over it. The lens grows in from the real size in 150 ms and shrinks back
+on the way out. The rest of the monitor stays as it is. Only what is drawn changes: the pointer moves and clicks in real coordinates. The key again goes back
+out, and so does any click (and `zoom_out`, `Mod+Shift+z`). The right Ctrl and Shift
+tapped together alone (both down, let go of both, nothing else pressed) click where the
+pointer is, zoomed or not: the hand on the keyboard, when the mouse is on the left. The left
+ones stay the apps' Ctrl+Shift, and the app gets the keys either way.
+A `zoom` line tells it, `in` with the center (`x`, `y`: the point that stays where it is,
+which may be past the tile's edge), the `scale` and the area drawn
+(`area_x` .. `area_h`, the lens, `tile`), then `out`; a point p is seen at
 center + (p − center)·scale. A click while zoomed also says where it was seen (`zoom_x`,
-`zoom_y`, `zoom_scale`): that is where the eyes were. `zoom` lines only come when asked for.
+`zoom_y`, `zoom_scale`), when the lens drew it (not in the dead frame): that is where the
+eyes were. `zoom` lines only come when asked for.
+Every click line says what pressed it, `by`: `mouse` (a real button), `key` (the right
+Ctrl+Shift tap) or `command` (`dune pointer click`: a voice, a script).
 
 A `strip` line tells the strip of tiles a monitor shows whenever it changes (a tile
 opens, closes or resizes, the view slides): each tile's rectangle along the strip and

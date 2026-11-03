@@ -84,7 +84,7 @@ enum Action {
     DockShow,
     /// Mod+a: dune-shell's minimap of the active monitor, through `dune events`.
     Minimap,
-    /// Mod+z: the tile under the pointer magnified around it; again: a click there.
+    /// Mod+z: the tile under the pointer magnified, the pointer in its middle; again: out (`crate::zoom`).
     Zoom,
     /// Mod+Shift+z: out of the zoom without a click.
     ZoomOut,
@@ -694,6 +694,7 @@ impl Dune {
         );
         if let Some((sym, mods)) = seen {
             self.track_mod_hold(sym, &mods, pressed);
+            self.track_click_tap(sym, &mods, pressed);
         }
         if let Some(action) = action {
             self.run_action(action);
@@ -736,13 +737,13 @@ impl Dune {
             }
             PointerOp::Click(b) => {
                 self.idle_notifier_state.notify_activity(&self.seat);
-                self.pointer_button(code(b), ButtonState::Pressed, InputTime::now());
-                self.pointer_button(code(b), ButtonState::Released, InputTime::now());
+                self.pointer_button(code(b), ButtonState::Pressed, InputTime::now(), false);
+                self.pointer_button(code(b), ButtonState::Released, InputTime::now(), false);
             }
             PointerOp::Press(b) | PointerOp::Release(b) => {
                 self.idle_notifier_state.notify_activity(&self.seat);
                 let state = if matches!(op, PointerOp::Press(_)) { ButtonState::Pressed } else { ButtonState::Released };
-                self.pointer_button(code(b), state, InputTime::now());
+                self.pointer_button(code(b), state, InputTime::now(), false);
             }
             PointerOp::Scroll { dy } => {
                 // Smooth, in pixels, as a touchpad's (an eye tracker's head tilt), to what is
@@ -790,7 +791,10 @@ impl Dune {
 
     /// A mouse button going down or up, from a mouse or `dune pointer click`: Mod drags,
     /// the dock click, the tab bar's "+", click to focus, then the client under the pointer.
-    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+    /// `gestures`: whether held modifiers make it a Mod drag or the dock click. Only a real
+    /// mouse's: a click dune makes (the right Ctrl+Shift tap, `dune pointer click`) is a plain
+    /// click, even with Mod still down from the key that asked for it.
+    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: InputTime, gestures: bool) {
         let locked = self.session_lock.is_locked();
         let pointer = self.seat.get_pointer().unwrap();
         let serial = SERIAL_COUNTER.next_serial();
@@ -808,8 +812,15 @@ impl Dune {
 
         // `dune events pointer` (dune-eye-tracker learns from where you click): not while locked.
         if button_state == ButtonState::Pressed {
-            self.tell_click(button, pointer.current_location());
-            // A click while zoomed (the mouse, a voice, the `zoom` key again) is where it
+            // What pressed it: a real button, else the Ctrl+Shift tap (it says so), else a
+            // command (`dune pointer click`).
+            let by = match std::mem::take(&mut self.click_by) {
+                _ if gestures => "mouse",
+                "" => "command",
+                by => by,
+            };
+            self.tell_click(button, by, pointer.current_location());
+            // A click while zoomed (the mouse, a voice, right Ctrl+Shift) is where it
             // was meant to be: back out. The click goes on, in real coordinates as ever.
             self.zoom_out();
         }
@@ -822,8 +833,8 @@ impl Dune {
         }
 
         let mods = self.seat.get_keyboard().unwrap().modifier_state();
-        let mod_held = modifier_held(&self.config.modifier, &mods);
-        let dock = self.config.dock_click.is_some_and(|c| c.matches(&mods, button));
+        let mod_held = gestures && modifier_held(&self.config.modifier, &mods);
+        let dock = gestures && self.config.dock_click.is_some_and(|c| c.matches(&mods, button));
 
         // Mod+left and Mod+right drags (`crate::seatop`) take their buttons;
         // while one goes on, every button is its own.
@@ -983,7 +994,7 @@ impl Dune {
                 self.hover_focus(pos);
             }
             InputEvent::PointerButton { event, .. } => {
-                self.pointer_button(event.button_code(), event.state(), event.time());
+                self.pointer_button(event.button_code(), event.state(), event.time(), true);
             }
             InputEvent::PointerAxis { event, .. } => {
                 // Shift+wheel scrolls sideways, Mod+wheel slides the strip: not a hold.
