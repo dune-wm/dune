@@ -45,7 +45,8 @@ Optional tools dune works with:
 A running dune keeps the old binary until the session is restarted.
 
 Parts apart from dune, each in its own repository, that talk to it through `dune events`
-and its commands; dune runs the same without them:
+and its commands; dune runs the same without them. Like dune, they all run on this computer:
+no sound, image or window of yours goes to the network.
 
 | Project | What |
 |---|---|
