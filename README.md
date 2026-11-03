@@ -21,6 +21,7 @@ folder jumper, the tile menu and the power menu.
 ## Install
 
 ```sh
+git clone https://github.com/dune-wm/dune && cd dune
 make install          # dune, dune-open, dune-finder and dune-session into ~/.cargo/bin,
                       # plus the portal settings into ~/.config (no root needed)
 make install-session  # the "Dune" entry of the login screen (asks for sudo)
@@ -42,6 +43,16 @@ Optional tools dune works with:
 | `yazi` | the terminal file manager dune-finder opens (`file_manager` in `finder.toml`) |
 
 A running dune keeps the old binary until the session is restarted.
+
+Parts apart from dune, each in its own repository, that talk to it through `dune events`
+and its commands; dune runs the same without them:
+
+| Project | What |
+|---|---|
+| [dune-shell](https://github.com/dune-wm/dune-shell) | the widgets in the monitors' corners, the dock and the minimap (Quickshell) |
+| [dune-voice](https://github.com/dune-wm/dune-voice) | drive dune by voice, all on this computer |
+| [dune-eye-tracker](https://github.com/dune-wm/dune-eye-tracker) | the pointer moved by where you look, with a webcam |
+| [dune-a11y](https://github.com/dune-wm/dune-a11y) | the apps' buttons and links by name, for the voice and the eye tracker |
 
 ## Running
 
