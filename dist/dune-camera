@@ -3,10 +3,16 @@
 # with as little delay as mpv can. Run again: it closes. A `[[rules]]` entry with
 # `actions = ["sticky"]` makes dune keep it small, in front of everything, on every desktop.
 #
-# DEVICE: a v4l2 device (default: the first one that captures video, else /dev/video0).
+# DEVICE: a v4l2 device (default: while dune-eye-tracker runs and shares the webcam, its
+# virtual camera "dune camera" (v4l2loopback); else the first one that captures video).
 # DUNE_CAMERA_SIZE (default 1280x720) and DUNE_CAMERA_MIRROR=0 change what it shows.
 # The picture fills the window whatever its shape, cropping what does not fit (resize the
 # float to a square or a strip to frame just your face); DUNE_CAMERA_CROP=0 letterboxes instead.
+#
+# While dune-eye-tracker runs (it keeps the webcam) and does not share it yet, this turns
+# its sharing on by itself (`dune-eye-tracker share`) and off again when the window closes,
+# however it closes. Sharing turned on by hand (a call) is left as it is, and so is sharing
+# a call still reads when the window closes.
 
 app_id=dune-camera
 
@@ -18,11 +24,61 @@ if pgrep -f -- "$running" >/dev/null 2>&1; then
     exit 0
 fi
 
+# The v4l2 device named "dune camera": dune-eye-tracker's virtual camera. With
+# exclusive_caps=1 it captures only while `run` writes to it (it keeps the webcam then).
+virtual_of() {
+    for n in /sys/class/video4linux/video*; do
+        [ "$(cat "$n/name" 2>/dev/null)" = "dune camera" ] && echo "/dev/${n##*/}" && return
+    done
+}
+virtual=$(virtual_of)
+# Captures video now: lists at least one format ("[0]: 'MJPG' ..."). The header
+# "Type: Video Capture" comes out for any device, even one that captures nothing.
+captures() {
+    v4l2-ctl -d "$1" --list-formats 2>/dev/null | grep -q "^[[:space:]]*\[[0-9]*\]:"
+}
+tracker() {
+    pgrep -f "dune_eye_tracker.cli run" 2>/dev/null | head -n 1
+}
+sharing() {
+    [ -n "$virtual" ] && [ -e "$virtual" ] || return 1
+    if command -v v4l2-ctl >/dev/null 2>&1; then
+        captures "$virtual"
+    else
+        [ -n "$(tracker)" ]
+    fi
+}
+# Something besides the tracker (which writes to it) reads the virtual camera: a call.
+read_by_other() {
+    command -v fuser >/dev/null 2>&1 || return 0  # cannot tell: keep it shared
+    t=$(tracker)
+    for pid in $(fuser "$virtual" 2>/dev/null); do
+        [ "$pid" != "$t" ] && [ "$pid" != "$$" ] && return 0
+    done
+    return 1
+}
+
 device=$1
+auto_shared=
+if [ -z "$device" ] && [ -n "$virtual" ] && [ -e "$virtual" ] && [ -n "$(tracker)" ] \
+    && command -v v4l2-ctl >/dev/null 2>&1 && ! sharing; then
+    # The tracker keeps the webcam: it shares it for us, as long as the window is open.
+    dune-eye-tracker share >/dev/null 2>&1
+    i=0
+    while [ $i -lt 30 ] && ! sharing; do  # the first frame within 3 s
+        sleep 0.1
+        i=$((i + 1))
+    done
+    sharing && auto_shared=1
+fi
+if [ -z "$device" ] && sharing; then
+    device=$virtual
+fi
 if [ -z "$device" ]; then
     for d in /dev/video*; do
+        [ "$d" = "$virtual" ] && continue  # its picture is the tracker's, only while it runs
         [ -e "$d" ] || continue
-        if ! command -v v4l2-ctl >/dev/null 2>&1 || v4l2-ctl -d "$d" --list-formats 2>/dev/null | grep -q "Video Capture"; then
+        if ! command -v v4l2-ctl >/dev/null 2>&1 || captures "$d"; then
             device=$d
             break
         fi
@@ -35,18 +91,28 @@ if [ -z "$device" ] || [ ! -e "$device" ]; then
 fi
 
 size=${DUNE_CAMERA_SIZE:-1280x720}
-mirror=--vf=hflip
-[ "${DUNE_CAMERA_MIRROR:-1}" = 0 ] && mirror=
+# The webcam: asked for MJPEG at `size`. The virtual camera gives what the tracker writes
+# (raw YUV at its size): taken as it is.
+demux=--demuxer-lavf-o=input_format=mjpeg,video_size="$size"
+[ "$device" = "$virtual" ] && demux=
+# Filters: mirrored, and the tracker's frames read as BT.601 (pyvirtualcam converts them so,
+# libyuv; at 1920x1080 mpv would guess BT.709 and show everything redder).
+vf=
+[ "${DUNE_CAMERA_MIRROR:-1}" = 0 ] || vf=hflip
+[ "$device" = "$virtual" ] && vf=${vf:+$vf,}format=colormatrix=bt.601:colorlevels=limited
+mirror=${vf:+--vf=$vf}
 crop=--panscan=1.0
 [ "${DUNE_CAMERA_CROP:-1}" = 0 ] && crop=
 
-exec mpv \
+# Not exec'd when sharing was turned on here: it goes off again once the window closes.
+[ -z "$auto_shared" ] && exec=exec || exec=
+$exec mpv \
     --wayland-app-id="$app_id" \
     --title=Camera \
     --profile=low-latency \
     --untimed \
     --cache=no \
-    --demuxer-lavf-o=input_format=mjpeg,video_size="$size" \
+    $demux \
     --no-osc \
     --no-input-default-bindings \
     --input-conf=/dev/null \
@@ -58,3 +124,8 @@ exec mpv \
     $mirror \
     $crop \
     "av://v4l2:$device"
+
+# The window closed: the sharing turned on above goes off, unless a call reads it now.
+if [ -n "$auto_shared" ] && sharing && ! read_by_other; then
+    dune-eye-tracker share >/dev/null 2>&1
+fi

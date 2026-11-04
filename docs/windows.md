@@ -161,7 +161,12 @@ call. A tiled tile turned sticky floats small in the bottom right corner (16:9);
 resize it as any float. The same again makes it an ordinary float.
 
 `dune-camera` (installed by `make install`; mpv on the first video device, mirrored, run
-again to close) is meant for it. Its picture fills the float whatever its shape, cropping
+again to close) is meant for it. While dune-eye-tracker runs it keeps the webcam and shares
+it on a virtual camera named "dune camera" (v4l2loopback): `dune-camera` shows that one
+then, as it is (raw YUV at the tracker's 1920x1080), and the webcam itself otherwise. With
+the tracker on and not sharing yet, `Mod+c` turns its sharing on by itself and off again when
+the window closes; sharing for a call (`dune-eye-tracker share`) stays by hand, and a call
+still reading the virtual camera keeps it on. Its picture fills the float whatever its shape, cropping
 what does not fit: resize it to a square or a strip to frame just a face
 (`DUNE_CAMERA_CROP=0` letterboxes instead).
 
