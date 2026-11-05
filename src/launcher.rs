@@ -337,6 +337,7 @@ impl Dune {
         if !self.tiles.get(&id).is_some_and(|t| t.stack.is_empty()) {
             return;
         }
+        self.fill_freed(id);
         self.remove_from_layouts(id);
         self.tiles.remove(&id);
         if self.focused == Some(id) {

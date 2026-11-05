@@ -2,18 +2,21 @@
 //! it is over none), for the last pixels of an eye tracker's or a shaky hand's pointing.
 //! The magnified view is a lens: the tile less a frame of `DEAD_FRAME` px on each side, in
 //! which the real tile shows (a dead zone for the eyes: they rest there without the lens
-//! moving). What the pointer is on is seen in the middle of the lens, whatever the side it
-//! is near: the tile's edges come in from the borders an eye tracker hardly reaches, and
-//! past them the real tile shows through (no backdrop). No border rings the lens: what of
-//! the tile it does not magnify (the frame, the real tile past the edges) is shaded, and
-//! that edge is the lens's. It grows in from the real size and back (`ANIMATION`), the
+//! moving). What the pointer is on is seen in the middle of the lens, unless that would
+//! pull a tile's edge more than `EDGE_IN` into it: by an edge the pointer is seen nearer
+//! that side, the edge just `EDGE_IN` in from the border an eye tracker hardly reaches,
+//! and past it the real tile shows through (no backdrop). A border rings the lens (`[zoom]`), and
+//! what of the tile it does not magnify (the frame, the real tile past the edges) is shaded.
+//! The lens stretches what the window already drew (no new scale for it, so it never
+//! redraws mid-zoom): softer text, but nothing jumps; the lens sharpens it back some (`crate::rounded::Sharpened`). It grows in from the real size and back (`ANIMATION`), the
 //! shade fading with it. The rest of the monitor stays as it is. Only what is drawn changes:
 //! the pointer and the clicks stay in real coordinates, nothing in input is translated.
 //! Subscribers hear both: `dune events zoom` gives the center, the area and the scale, and
 //! a click while zoomed also says where it was seen (`zoom_x`, `zoom_y`), which is where
-//! the eyes were. The same key again goes back out. Any button press (the mouse, the
-//! right Ctrl+Shift tap, `dune pointer click`, a voice) goes back out, and so does
-//! `zoom_out`.
+//! the eyes were. The same key again clicks where the pointer is, a plain click even with
+//! Mod down (it never floats the tile), and so goes back out. Any button press (the mouse, the
+//! right Ctrl+Shift tap, `dune pointer click`, a voice) goes back out, and so do
+//! `zoom_out` and Mod tapped alone (`crate::mod_hold`), without a click.
 //!
 //! The right Ctrl and Shift tapped together alone (both let go, nothing else pressed)
 //! click where the pointer is, zoomed or not: the hand on the keyboard when the mouse is
@@ -35,8 +38,13 @@ pub const ZOOM: u32 = 3;
 /// The frame inside the tile left out of the lens, where the real tile shows: logical px.
 pub const DEAD_FRAME: i32 = 50;
 
-/// How long the lens takes to grow to `ZOOM` (and back to 1 on the way out).
-pub const ANIMATION: Duration = Duration::from_millis(150);
+/// How far into the lens a tile's edge comes at most (logical px): off the border, where
+/// the eyes hardly reach, without leaving half the lens unmagnified by an edge.
+pub const EDGE_IN: i32 = DEAD_FRAME;
+
+/// How long the lens takes to grow to `ZOOM` (and back to 1 on the way out), unless
+/// `[zoom] animation_ms` says otherwise.
+pub const ANIMATION: Duration = Duration::from_millis(300);
 
 /// The zoom on one monitor: around `center` (the point that stays where it is, chosen so
 /// the pointer is seen in the middle of `area`), drawn inside `area` (the lens: the tile's
@@ -52,6 +60,8 @@ pub struct Zoom {
     pub scale: u32,
     /// When it went in (or, leaving, out): for the animation.
     pub since: Instant,
+    /// How long it grows in and shrinks back (`[zoom] animation_ms`).
+    pub duration: Duration,
 }
 
 impl Zoom {
@@ -79,7 +89,7 @@ impl Zoom {
     /// The scale drawn `elapsed` after `since`: from 1 up to `scale` going in, back down
     /// leaving; and how far along (0 to 1, eased), for the shade's fade.
     pub fn drawn_scale(&self, leaving: bool) -> (f64, f64) {
-        let t = (self.since.elapsed().as_secs_f64() / ANIMATION.as_secs_f64()).min(1.0);
+        let t = if self.duration.is_zero() { 1.0 } else { (self.since.elapsed().as_secs_f64() / self.duration.as_secs_f64()).min(1.0) };
         let a = crate::tiling::ease_out(t);
         let a = if leaving { 1.0 - a } else { a };
         (1.0 + a * (self.scale as f64 - 1.0), a)
@@ -87,7 +97,7 @@ impl Zoom {
 
     /// Whether the way out is over (nothing more to draw).
     pub fn gone(&self) -> bool {
-        self.since.elapsed() >= ANIMATION
+        self.since.elapsed() >= self.duration
     }
 }
 
@@ -105,6 +115,20 @@ pub fn lens(area: Rect) -> Rect {
 pub fn centered(pointer: Point<f64, Logical>, area: Rect, zoom: f64) -> Point<f64, Logical> {
     let m = Point::<f64, Logical>::from((area.x as f64 + area.w as f64 / 2.0, area.y as f64 + area.h as f64 / 2.0));
     Point::from(((zoom * pointer.x - m.x) / (zoom - 1.0), (zoom * pointer.y - m.y) / (zoom - 1.0)))
+}
+
+/// `centered`, but held so the edges of `bounds` (the tile) magnified come at most
+/// `edge_in` into `area`: seen(b) = z·b − (z − 1)·c, so on x c ≥ (z·b.x − area.x −
+/// edge_in)/(z − 1) and c ≤ (z·b.right − area.right + edge_in)/(z − 1); the same on y. A
+/// tile too small for both keeps the pointer in the middle.
+pub fn held(pointer: Point<f64, Logical>, area: Rect, bounds: Rect, zoom: f64, edge_in: f64) -> Point<f64, Logical> {
+    let c = centered(pointer, area, zoom);
+    let hold = |c: f64, a: i32, aw: i32, b: i32, bw: i32| {
+        let lo = (zoom * b as f64 - a as f64 - edge_in) / (zoom - 1.0);
+        let hi = (zoom * (b + bw) as f64 - (a + aw) as f64 + edge_in) / (zoom - 1.0);
+        if lo <= hi { c.clamp(lo, hi) } else { c }
+    };
+    Point::from((hold(c.x, area.x, area.w, bounds.x, bounds.w), hold(c.y, area.y, area.h, bounds.y, bounds.h)))
 }
 
 /// Where a `RescaleRenderElement` of scale `output_scale · zoom` has its origin for
@@ -181,10 +205,12 @@ impl Dune {
     }
 
     /// The `zoom` key: in on the tile under the pointer, the pointer in its middle; zoomed
-    /// already, out.
+    /// already, a left click where the pointer is, which goes back out (`zoom_out` goes out
+    /// without one). The click is a plain one, Mod held or not: it never floats the tile.
     pub fn zoom_key(&mut self) {
         if self.zoom.is_some() {
-            self.zoom_out();
+            self.click_by = "key";
+            self.pointer_request(PointerOp::Click(MouseButton::Left));
             return;
         }
         let here = self.seat.get_pointer().unwrap().current_location();
@@ -198,22 +224,22 @@ impl Dune {
             .map(|r| Rect::new(r.x - geo.loc.x, r.y - geo.loc.y, r.w, r.h))
             .unwrap_or_else(|| Rect::new(0, 0, geo.size.w, geo.size.h));
         let lens = lens(area);
-        let center = centered(here - geo.loc.to_f64(), lens, ZOOM as f64);
-        let zoom = Zoom { output: output.name(), tile, center, area: lens, bounds: area, scale: ZOOM, since: Instant::now() };
+        let center = held(here - geo.loc.to_f64(), lens, area, ZOOM as f64, EDGE_IN as f64);
+        let zoom = Zoom { output: output.name(), tile, center, area: lens, bounds: area, scale: ZOOM, since: Instant::now(), duration: self.config.zoom.animation };
         self.tell_zoom(true, &zoom);
         self.zoom_leaving = None;
         self.zoom = Some(zoom);
     }
 
     /// Back to the monitor as it is (the `zoom_out` key, or a button pressed while in):
-    /// at once for input and subscribers; the lens shrinks back as it goes (`ANIMATION`),
+    /// at once for input and subscribers; the lens shrinks back as it goes (`Zoom::duration`),
     /// from the scale it had reached.
     pub fn zoom_out(&mut self) {
         if let Some(mut zoom) = self.zoom.take() {
             self.tell_zoom(false, &zoom);
             // caught growing: shrink from there, as long as it had grown
-            let grown = zoom.since.elapsed().min(ANIMATION);
-            zoom.since = Instant::now() - (ANIMATION - grown);
+            let grown = zoom.since.elapsed().min(zoom.duration);
+            zoom.since = Instant::now() - (zoom.duration - grown);
             self.zoom_leaving = Some(zoom);
         }
     }
@@ -249,7 +275,7 @@ mod tests {
     }
 
     fn zoom(center: Point<f64, Logical>, area: Rect, bounds: Rect) -> Zoom {
-        Zoom { output: "M".into(), tile: None, center, area, bounds, scale: 3, since: Instant::now() }
+        Zoom { output: "M".into(), tile: None, center, area, bounds, scale: 3, since: Instant::now(), duration: ANIMATION }
     }
 
     #[test]
@@ -346,6 +372,23 @@ mod tests {
         // 10 px from the left edge: the edge is seen 30 px left of the middle, not cut
         let z = zoom(centered((110.0, 250.0).into(), area, 3.0), area, area);
         assert!((z.seen((100.0, 250.0).into()).x - 370.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn by_an_edge_the_tile_comes_in_only_edge_in() {
+        let tile = Rect::new(0, 0, 1200, 900);
+        let lens = lens(tile); // (50, 50) 1100x800
+        // in the middle: the pointer in the middle
+        let z = zoom(held((600.0, 450.0).into(), lens, tile, 3.0, 50.0), lens, tile);
+        assert!((z.seen((600.0, 450.0).into()).x - 600.0).abs() < 1e-9);
+        // 20 px from the left edge: the edge 50 px into the lens, not by its middle
+        let z = zoom(held((20.0, 450.0).into(), lens, tile, 3.0, 50.0), lens, tile);
+        assert!((z.seen((0.0, 450.0).into()).x - 100.0).abs() < 1e-9);
+        assert!((z.seen((20.0, 450.0).into()).x - 160.0).abs() < 1e-9);
+        // and the right and bottom edges alike
+        let z = zoom(held((1190.0, 890.0).into(), lens, tile, 3.0, 50.0), lens, tile);
+        assert!((z.seen((1200.0, 900.0).into()).x - 1100.0).abs() < 1e-9);
+        assert!((z.seen((1200.0, 900.0).into()).y - 800.0).abs() < 1e-9);
     }
 
     #[test]

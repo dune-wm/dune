@@ -6,6 +6,9 @@
 //! while Shift is. Mod only for a `modifier` that is one key (`super`, `alt`); neither
 //! while the session is locked or a window holds the keys.
 //!
+//! Mod tapped alone (let go before `HOLD`, nothing else on the way) takes the zoom out,
+//! without a click (`crate::zoom`): Mod+z, a hold for dune-voice or Mod+click are no tap.
+//!
 //! ```text
 //! {"event":"mod","change":"start","keys":"mod"}
 //! {"event":"mod","change":"end","keys":"mod"}
@@ -60,23 +63,28 @@ struct Reaction {
     told: Told,
     /// A press of Mod or Shift alone: wait `HOLD`, then `elapsed`.
     wait: bool,
+    /// Let go before `HOLD` with nothing else on the way: tapped alone.
+    tap: Option<Keys>,
 }
 
 impl ModHold {
     /// A key went down or up: `key` is a key of Mod or Shift, `alone` the only modifier
     /// held after it (and nothing else that counts).
     fn key(&mut self, key: Option<Keys>, alone: Option<Keys>, pressed: bool) -> Reaction {
-        let none = Reaction { told: None, wait: false };
+        let none = Reaction { told: None, wait: false, tap: None };
         match (pressed, key) {
             // The other one of a pair (Shift_R after Shift_L), or key repeat.
             (true, Some(k)) if self.down == Some(k) && alone == Some(k) => none,
             (true, Some(k)) if alone == Some(k) => {
                 let told = self.stop("cancel");
                 *self = ModHold { down: Some(k), started: false, press: self.press + 1 };
-                Reaction { told, wait: true }
+                Reaction { told, wait: true, tap: None }
             }
-            (true, _) => Reaction { told: self.stop("cancel"), wait: false },
-            (false, Some(k)) if self.down == Some(k) => Reaction { told: self.stop("end"), wait: false },
+            (true, _) => Reaction { told: self.stop("cancel"), wait: false, tap: None },
+            (false, Some(k)) if self.down == Some(k) => {
+                let tap = (!self.started).then_some(k);
+                Reaction { told: self.stop("end"), wait: false, tap }
+            }
             (false, _) => none,
         }
     }
@@ -145,6 +153,9 @@ impl Dune {
         let alone = alone.filter(|_| !self.session_lock.is_locked() && !self.shortcuts_inhibited());
         let reaction = self.mod_hold.key(key, alone, pressed);
         self.tell_mod(reaction.told);
+        if reaction.tap == Some(Keys::Mod) && self.zoom.is_some() {
+            self.zoom_out(); // Mod tapped alone: out of the zoom, no click
+        }
         if reaction.wait {
             let press = self.mod_hold.press;
             let timer = self.loop_handle.insert_source(Timer::from_duration(HOLD), move |_, _, state| {
@@ -183,7 +194,7 @@ mod tests {
     #[test]
     fn held_alone_then_let_go() {
         let mut hold = ModHold::default();
-        assert_eq!(hold.key(MOD, MOD, true), Reaction { told: None, wait: true });
+        assert_eq!(hold.key(MOD, MOD, true), Reaction { told: None, wait: true, tap: None });
         assert_eq!(hold.elapsed(hold.press), Some(("start", Keys::Mod)));
         assert_eq!(hold.key(MOD, None, false).told, Some(("end", Keys::Mod)));
         // Shift the same.
@@ -211,6 +222,27 @@ mod tests {
         let press = hold.press;
         hold.key(None, SHIFT, true);
         assert_eq!(hold.elapsed(press), None);
+    }
+
+    #[test]
+    fn only_a_press_let_go_alone_before_the_hold_is_a_tap() {
+        let mut hold = ModHold::default();
+        // Mod tapped alone.
+        hold.key(MOD, MOD, true);
+        assert_eq!(hold.key(MOD, None, false).tap, MOD);
+        // Held for dune-voice, then let go: no tap.
+        hold.key(MOD, MOD, true);
+        hold.elapsed(hold.press);
+        assert_eq!(hold.key(MOD, None, false).tap, None);
+        // Mod+z (how the zoom goes in): no tap when Mod is let go.
+        hold.key(MOD, MOD, true);
+        hold.key(None, None, true);
+        hold.key(None, MOD, false);
+        assert_eq!(hold.key(MOD, None, false).tap, None);
+        // Mod+click: no tap.
+        hold.key(MOD, MOD, true);
+        hold.button();
+        assert_eq!(hold.key(MOD, None, false).tap, None);
     }
 
     #[test]
@@ -243,7 +275,7 @@ mod tests {
         hold.key(MOD, MOD, true);
         hold.elapsed(hold.press);
         // Mod+Shift: the Mod hold is a shortcut on its way; no Shift hold starts.
-        assert_eq!(hold.key(SHIFT, None, true), Reaction { told: Some(("cancel", Keys::Mod)), wait: false });
+        assert_eq!(hold.key(SHIFT, None, true), Reaction { told: Some(("cancel", Keys::Mod)), wait: false, tap: None });
         assert_eq!(hold.elapsed(hold.press), None);
         assert_eq!(hold.key(SHIFT, MOD, false).told, None);
     }
@@ -253,7 +285,7 @@ mod tests {
         let mut hold = ModHold::default();
         hold.key(SHIFT, SHIFT, true);
         let press = hold.press;
-        assert_eq!(hold.key(SHIFT, SHIFT, true), Reaction { told: None, wait: false });
+        assert_eq!(hold.key(SHIFT, SHIFT, true), Reaction { told: None, wait: false, tap: None });
         assert_eq!(hold.elapsed(press), Some(("start", Keys::Shift)));
     }
 

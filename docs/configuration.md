@@ -14,7 +14,7 @@ window manager and `finder.toml` for dune-finder. Every setting is optional. Sav
 dune-finder reads `finder.toml` each time it opens.
 
 The look settings (`border_color`, `focus_color`, `background_color`, `border_width`,
-`gap`, `corner_radius`) can also be read and set from outside: `dune config get` prints them
+`gap`, `corner_radius`, `fill_on_close`) can also be read and set from outside: `dune config get` prints them
 as JSON, `dune config set KEY VALUE` writes one into `dune.toml`, keeping its comments, and
 has dune apply it at once. dune-shell's settings window sets them that way.
 
@@ -30,6 +30,7 @@ modifier = "alt"               # alt (default), super or ctrl+alt: `mod` below
 lock_command = "swaylock -f"
 follow = true                  # go to the desktop an app is launched on
 focus_follows_mouse = true
+fill_on_close = true           # the columns left take the width of a column that closes (default false)
 xwayland = "satellite"         # or "off"
 font = "JetBrains Mono"        # tab titles
 border_color = "none"          # "#RRGGBB", "#RRGGBBAA" or "none"
@@ -59,9 +60,21 @@ inactive_text = "#9096a4"      # the other titles and the "+"
 [animations]
 enabled = true                 # false: resizes, slides and closes are instant
 resize_ms = 150                # a resize; 0-1000, 0: none
-slide_ms = 280                 # the strip sliding to another column (focus key, head turn, Super+wheel); 0-1000, 0: none
+slide_ms = 280                 # the strip sliding to another column (focus key, head turn, Super+wheel), a third of the monitor; further takes longer (a whole monitor ~1.7x, at most 1.8x), gently eased; 0-1000, 0: none
 close_ms = 150                 # 0-1000, 0: none
 close_scale = 0.85             # how small a closing tile ends, 0.5-1.0
+
+[zoom]
+border_width = 2               # px of the border around the zoom's lens, 0-16 (0: none)
+border_color = "#5c9ef2"       # its color, or "none" (default: focus_color)
+animation_ms = 300             # ms the lens grows in and shrinks back, 0-1000 (0: at once)
+sharpen = 0.5                  # how much the lens sharpens what it stretches, 0.0-2.0 (0: not)
+
+[watermark]
+enabled = true                 # the shown desktop's number (🔒 3 when locked), faint in each monitor's top-left corner; it takes no clicks
+size = 64                      # px of its text, 16-256
+alpha = 0.2                    # how much it shows, 0.0-1.0
+color = "#ffffff"
 
 [capture]
 screenshot_dir = "~/shots"
@@ -205,8 +218,8 @@ window's app id (`focus ... app=...`), which helps when writing rules.
 | `shortcuts_inhibit` | `Mod+Shift+Escape` | take dune's keys back from a window holding every key (again: give them) |
 | `dock_show` | `Mod+Shift+e` | dune-shell shows the dock of the active monitor (again: hides it), through `dune events` |
 | `minimap` | `Mod+a` | dune-shell's minimap of the active monitor (again: hide it), through `dune events` |
-| `zoom` | `Mod+z` | the tile under the pointer magnified 3x, in a lens 50 px inside its edges (the real tile in that frame), the pointer in its middle, for the last pixels (an eye tracker's); again: out, and so does any click (the right Ctrl+Shift tap clicks, zoomed or not) |
-| `zoom_out` | `Mod+Shift+z` | out of the zoom without a click |
+| `zoom` | `Mod+z` | the tile under the pointer magnified 3x, in a lens 50 px inside its edges (the real tile in that frame), the pointer in its middle (by an edge, nearer that side: the edge comes at most 50 px into the lens), for the last pixels (an eye tracker's); again: a left click there, which goes out, as any click does (zoomed, a click is plain, Mod or not: no float; the right Ctrl+Shift tap clicks, zoomed or not) |
+| `zoom_out` | `Mod+Shift+z` | out of the zoom without a click (Mod tapped alone too) |
 | `quit` | none | end the session at once (Log out: dune-finder's System mode) |
 | `screenshot` / `_tile` / `_screen` | `Print` / `Ctrl+Print` / `Shift+Print` | screenshot region / tile / monitor |
 | `record` / `_tile` / `_screen` | `Mod+Shift+r` / `Mod+Ctrl+r` / `Mod+Ctrl+Shift+r` | record region / tile / monitor |

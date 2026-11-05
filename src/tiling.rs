@@ -39,11 +39,27 @@ const CONFIGURE_WAIT: Duration = Duration::from_millis(150);
 /// How soon after an unclaimed window opens a window of its app closing leaves it its place.
 const REPLACE_WINDOW: Duration = Duration::from_secs(3);
 
-/// How a slide moves: for how long and along which curve.
+/// How a slide moves: for how long and along which curve. `stretch`: a strip slide whose
+/// duration still has to be fitted to how far it goes (`slide_stretch`), once the layout
+/// it goes to is known.
 #[derive(Clone, Copy)]
 pub struct Glide {
     pub duration: Duration,
     pub ease: fn(f64) -> f64,
+    pub stretch: bool,
+}
+
+/// The share of a monitor's width a strip slide of `animations.slide_ms` covers (a third of
+/// it: a column of three); a longer one takes longer, by the square root of how much
+/// longer, up to `SLIDE_STRETCH` times: a whole monitor (one tile on it) ~1.7 times, half
+/// of one (two tiles) ~1.2 times. Its speed grows less than its length, so the whole
+/// screen going by does not rush past.
+const SLIDE_SPAN: f64 = 0.35;
+const SLIDE_STRETCH: f64 = 1.8;
+
+/// How many times `animations.slide_ms` a slide `span` monitor widths long takes.
+pub fn slide_stretch(span: f64) -> f64 {
+    (span.max(0.0) / SLIDE_SPAN).sqrt().clamp(1.0, SLIDE_STRETCH)
 }
 
 /// A resize sliding into place: where each tile it moves started, since when, and how.
@@ -71,10 +87,16 @@ pub fn ease_out(t: f64) -> f64 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
-/// Ease-in-out cubic: gathers speed, then settles; no jump on the first frame.
-pub fn ease_in_out(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
+/// Ease-in-out sine: gathers speed, then settles; no jump on the first frame, and no rush
+/// in the middle (its top speed 1.6 times the mean, a cubic's 3): the strip sliding a whole
+/// screen does not lurch.
+pub fn ease_in_out_sine(t: f64) -> f64 {
+    (1.0 - (t.clamp(0.0, 1.0) * std::f64::consts::PI).cos()) / 2.0
+}
+
+/// Ease-out sine: a slide caught mid-way goes on at about the speed it had, then settles.
+pub fn ease_out_sine(t: f64) -> f64 {
+    (t.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2).sin()
 }
 
 /// Where a tile being dragged would go: next to `target` on `side` in `output`'s
@@ -370,6 +392,18 @@ impl Dune {
         self.remove_from_dock(id);
     }
 
+    /// `id` closes for good: with `fill_on_close` the columns left on its desktop take its
+    /// width. A tile only moving elsewhere (`remove_from_layouts`) leaves its width alone.
+    pub(crate) fn fill_freed(&mut self, id: TileId) {
+        if self.config.fill_on_close {
+            let shown = self.layouts.values_mut();
+            let hidden = self.hidden.values_mut().map(|desk| &mut desk.layout);
+            shown.chain(hidden).for_each(|layout| {
+                layout.remove_filling(id);
+            });
+        }
+    }
+
     /// The tile focus goes to when `id` leaves its spot: a neighbour, else the first of its output.
     pub fn neighbor_of(&self, id: TileId) -> Option<TileId> {
         // A tab leaving its container: the tab shown in its place.
@@ -518,8 +552,12 @@ impl Dune {
             return;
         };
 
-        // The last window: its frame, to fade out if the tile goes (while it is mapped).
+        // The last window: its frame, to fade out if the tile goes (while it is mapped);
+        // a sticky one's place, for the next window of its app.
         let last = self.tiles.get(&id).is_some_and(|t| t.stack.len() == 1);
+        if last {
+            self.remember_sticky_place(id);
+        }
         let snapshot = last.then(|| self.closing_snapshot(id, &self.tiles[&id].stack[pos].clone())).flatten();
         let tile = self.tiles.get_mut(&id).unwrap();
         let window = tile.stack.remove(pos);
@@ -552,6 +590,7 @@ impl Dune {
                 self.animate_resize();
             }
             let next = self.neighbor_of(id);
+            self.fill_freed(id);
             self.remove_from_layouts(id);
             self.tiles.remove(&id);
             if self.focused == Some(id) {
@@ -758,8 +797,9 @@ impl Dune {
             };
             let floating = self.is_floating(*id);
             let fullscreen = self.covers.values().any(|c| c == id);
-            // Columns scrolled off the output are not drawn (nor shown on a neighbour).
-            if !self.shown.iter().any(|(t, _)| t == id) {
+            // Columns scrolled off the output are not drawn (nor shown on a neighbour); one
+            // sliding off it is, until it is gone.
+            if !self.on_screen(*id) {
                 self.space.unmap_elem(&window);
             } else {
                 self.space.map_element(window.clone(), (rect.x, rect.y), false);
@@ -794,7 +834,7 @@ impl Dune {
         let Some(anim) = &self.resize_animation else { return target };
         let Some(from) = anim.from.get(&id) else { return target };
         // `animations.resize_ms` or `slide_ms`; none: already there.
-        let Glide { duration, ease } = anim.glide;
+        let Glide { duration, ease, .. } = anim.glide;
         if duration.is_zero() {
             return target;
         }
@@ -802,18 +842,57 @@ impl Dune {
         lerp_rect(*from, target, ease(t))
     }
 
+    /// Whether `id` is drawn now: shown where it is laid out, or, while the strip slides
+    /// (or a layout is held), still on its monitor on its way out of view. Without that, a
+    /// monitor-wide column left by a focus key vanishes at once and the next one slides in
+    /// over the empty desktop, instead of pushing it out as a wheel notch does.
+    pub(crate) fn on_screen(&self, id: TileId) -> bool {
+        if self.shown.iter().any(|(t, _)| *t == id) {
+            return true;
+        }
+        let Some((_, target)) = self.geometries.iter().find(|(t, _)| *t == id) else { return false };
+        let drawn = self.drawn_rect(id, *target);
+        if drawn == *target {
+            return false;
+        }
+        // A fullscreen tile covers its monitor: nothing else of it is drawn.
+        let Some(name) = self.output_of(id).filter(|n| !self.covers.contains_key(n)) else { return false };
+        let Some(output) = self.space.outputs().find(|o| o.name() == name) else { return false };
+        self.output_rect(output).is_some_and(|area| drawn.intersection(&area).is_some())
+    }
+
     /// Start a resize sliding from where the tiles are drawn now (so repeated keys glide on).
     pub fn animate_resize(&mut self) {
-        self.animate(Glide { duration: self.config.animations.resize, ease: ease_out });
+        self.animate(Glide { duration: self.config.animations.resize, ease: ease_out, stretch: false });
     }
 
     /// Start the strip sliding sideways (a focus key, a head turn, a wheel notch): longer and
-    /// eased in, so it does not jump. One caught mid-slide keeps its speed (eases out) instead
-    /// of stopping and starting again.
+    /// eased in, so it does not jump, and longer still the further it goes (`slide_stretch`,
+    /// fitted when the layout shows). One caught mid-slide keeps its speed (eases out)
+    /// instead of stopping and starting again.
     pub fn animate_slide(&mut self) {
         let duration = self.config.animations.slide;
         let moving = self.resize_animation.as_ref().is_some_and(|a| a.start.elapsed() < a.glide.duration);
-        self.animate(Glide { duration, ease: if moving { ease_out } else { ease_in_out } });
+        let ease = if moving { ease_out_sine } else { ease_in_out_sine };
+        self.animate(Glide { duration, ease, stretch: true });
+    }
+
+    /// How far the tiles of a slide from `from` go, in widths of their monitor: the most
+    /// any of them goes.
+    fn slide_span(&self, from: &HashMap<TileId, Rect>) -> f64 {
+        let widths: HashMap<String, f64> = self
+            .space
+            .outputs()
+            .filter_map(|o| Some((o.name(), self.space.output_geometry(o)?.size.w as f64)))
+            .collect();
+        self.geometries
+            .iter()
+            .filter_map(|(id, to)| {
+                let was = from.get(id)?;
+                let width = *widths.get(&self.output_of(*id)?)?;
+                (width > 0.0).then(|| (to.x - was.x).abs() as f64 / width)
+            })
+            .fold(0.0, f64::max)
     }
 
     fn animate(&mut self, glide: Glide) {
@@ -831,6 +910,12 @@ impl Dune {
         // The slide waits while the layout is held.
         if self.transaction.is_some() {
             return;
+        }
+        // A strip slide now knows where it goes: its duration fitted to how far.
+        let span = self.resize_animation.as_ref().filter(|a| a.glide.stretch).map(|a| self.slide_span(&a.from));
+        if let (Some(span), Some(anim)) = (span, self.resize_animation.as_mut()) {
+            anim.glide.duration = anim.glide.duration.mul_f64(slide_stretch(span));
+            anim.glide.stretch = false;
         }
         let Some(anim) = &self.resize_animation else {
             if ended {
@@ -1421,13 +1506,29 @@ mod tests {
         let (from, to) = (Rect::new(0, 0, 500, 600), Rect::new(0, 0, 600, 600));
         assert_eq!(lerp_rect(from, to, ease_out(0.0)), from);
         assert_eq!(lerp_rect(from, to, ease_out(1.0)), to);
-        assert_eq!(lerp_rect(from, to, ease_in_out(0.0)), from);
-        assert_eq!(lerp_rect(from, to, ease_in_out(1.0)), to);
+        assert_eq!(lerp_rect(from, to, ease_in_out_sine(0.0)), from);
+        assert_eq!(lerp_rect(from, to, ease_in_out_sine(1.0)), to);
         // Eased in: barely moved on the first frame, halfway at the middle.
-        assert!(ease_in_out(0.05) < 0.001 && (ease_in_out(0.5) - 0.5).abs() < 1e-9);
+        assert!(ease_in_out_sine(0.05) < 0.01 && (ease_in_out_sine(0.5) - 0.5).abs() < 1e-9);
         assert_eq!(lerp_rect(from, to, ease_out(2.0)), to);
         // Eased out: more than half the way at half the time.
         assert!(lerp_rect(from, to, ease_out(0.5)).w > 550);
+    }
+
+    #[test]
+    fn a_strip_slide_is_gentle_and_takes_longer_the_further_it_goes() {
+        // From rest to rest, halfway at the middle, at most ~1.6 times the mean speed there.
+        assert_eq!(ease_in_out_sine(0.0), 0.0);
+        assert!((ease_in_out_sine(1.0) - 1.0).abs() < 1e-12 && (ease_in_out_sine(0.5) - 0.5).abs() < 1e-12);
+        let top = (ease_in_out_sine(0.505) - ease_in_out_sine(0.495)) / 0.01;
+        assert!(top < 1.6 && top > 1.5);
+        assert!((ease_out_sine(1.0) - 1.0).abs() < 1e-12 && ease_out_sine(0.5) > 0.7);
+        // A column of three: as `slide_ms`; two tiles ~1.2 times; one ~1.7; never more than 1.8.
+        assert_eq!(slide_stretch(0.33), 1.0);
+        assert!((slide_stretch(0.5) - 1.195).abs() < 0.01);
+        assert!((slide_stretch(1.0) - 1.69).abs() < 0.01);
+        assert_eq!(slide_stretch(3.0), SLIDE_STRETCH);
+        assert_eq!(slide_stretch(0.0), 1.0);
     }
 
     #[test]

@@ -98,6 +98,8 @@ pub struct Dune {
     /// Floats in front of every other tile, kept on their monitor's shown desktop whichever
     /// it is (`crate::floating`, the `sticky` tile option).
     pub sticky: HashSet<TileId>,
+    /// Where sticky floats were, by app id, for their next window (`crate::sticky_places`).
+    pub sticky_places: crate::sticky_places::StickyPlaces,
     /// By output: the fullscreen tile covering it now (laid out on its shown desktop).
     pub covers: HashMap<String, TileId>,
     /// The last-mile zoom, while on (`crate::zoom`): one tile (or monitor) magnified.
@@ -207,6 +209,8 @@ pub struct Dune {
     pub backend: Backend,
     pub decorations: crate::render::Decorations,
     pub tab_titles: crate::tab_title::TabTitles,
+    /// The shown desktop's number in the corner of each monitor.
+    pub watermark: crate::watermark::Watermark,
     /// Bars told about the desktops (ext-workspace-v1).
     pub workspaces: crate::workspaces::WorkspaceState,
     /// Night light: gamma ramps clients set per monitor (wlr-gamma-control).
@@ -397,6 +401,7 @@ impl Dune {
             edge_counts: HashMap::new(),
             fullscreen: HashSet::new(),
             sticky: HashSet::new(),
+            sticky_places: crate::sticky_places::StickyPlaces::load(),
             covers: HashMap::new(),
             seatop: Default::default(),
             floating: HashMap::new(),
@@ -442,6 +447,7 @@ impl Dune {
             popups,
             seat,
             tab_titles: crate::tab_title::TabTitles::new(&config.font_family, config.tab_widths, config.tab_style),
+            watermark: crate::watermark::Watermark::new(&config.font_family, config.watermark),
             finder: None,
             finder_exited,
             recording: None,

@@ -8,6 +8,7 @@
 //! lock_command = "swaylock -f"  # what the `lock` key runs; default swaylock -f
 //! follow = true               # go to the desktop an app is launched on (`firefox :d3`); default false
 //! focus_follows_mouse = true  # the tile under the pointer takes focus (when all of it is on screen); default false
+//! fill_on_close = true        # the columns left take the width of a column that closes; default false
 //! xwayland = "satellite"      # X11 apps through xwayland-satellite, or "off"
 //! font = "JetBrains Mono"     # tab titles; default monospace
 //! border_color = "#ffffff"    # border of tiles without focus: #RRGGBB or #RRGGBBAA, or "none"; default white
@@ -38,9 +39,21 @@
 //! [animations]
 //! enabled = true              # false: resizes and closes are instant; default true
 //! resize_ms = 150             # ms a resize slides for (0-1000, 0 none); default 150
-//! slide_ms = 280              # ms the strip slides sideways for (a focus key, a head turn, Super+wheel) (0-1000, 0 none); default 280
+//! slide_ms = 280              # ms the strip slides sideways for (a focus key, a head turn, Super+wheel) a third of the monitor; further takes longer, up to 1.8x (0-1000, 0 none); default 280
 //! close_ms = 150              # ms a closing tile shrinks and fades for (0-1000, 0 none); default 150
 //! close_scale = 0.85          # how big a closing tile ends, as a share of its size (0.5-1.0); default 0.85
+//!
+//! [zoom]
+//! border_width = 2            # px of the border around the zoom's lens (0-16, 0 none); default 2
+//! border_color = "#5c9ef2"    # its color, as focus_color; default focus_color (#5c9ef2 when that is none)
+//! sharpen = 0.5             # how much the lens sharpens what it stretches (0.0-2.0, 0 not); default 0.5
+//! animation_ms = 300          # ms the lens grows in and shrinks back (0-1000, 0 at once); default 300
+//!
+//! [watermark]
+//! enabled = true              # the shown desktop's number, faint in the top-left corner of each monitor; default true
+//! size = 64                   # px of its text (16-256); default 64
+//! alpha = 0.2                 # how much it shows (0.0-1.0); default 0.2
+//! color = "#ffffff"           # its color, #RRGGBB; default white
 //!
 //! [capture]
 //! screenshot_dir = "~/shots"  # where the `screenshot` keys save; default $XDG_PICTURES_DIR/Screenshots, else ~/Pictures/Screenshots
@@ -644,6 +657,8 @@ pub struct Config {
     pub follow: bool,
     /// The tile under the pointer takes focus as the pointer moves.
     pub focus_follows_mouse: bool,
+    /// The columns left grow into the width of a column that closes.
+    pub fill_on_close: bool,
     /// The click that puts the tile under the pointer into the dock.
     pub dock_click: Option<ClickSpec>,
     /// `satellite` (default) or `off`.
@@ -659,6 +674,10 @@ pub struct Config {
     pub tab_style: crate::tab_title::TabStyle,
     /// How long resizes and closes animate for, and how a closing tile shrinks.
     pub animations: Animations,
+    /// The border around the zoom's lens (`[zoom]`).
+    pub zoom: ZoomStyle,
+    /// The shown desktop's number in the corner of each monitor (`[watermark]`).
+    pub watermark: crate::watermark::WatermarkStyle,
     /// The border of tiles without focus (premultiplied RGBA); `None`: not drawn.
     pub border_color: Option<[f32; 4]>,
     /// The border of the focused tile, the same way.
@@ -735,6 +754,7 @@ struct File {
     lock_command: Option<String>,
     follow: bool,
     focus_follows_mouse: bool,
+    fill_on_close: bool,
     xwayland: Option<String>,
     font: Option<String>,
     border_color: Option<String>,
@@ -747,6 +767,8 @@ struct File {
     keyboard: KeyboardFile,
     tabs: TabsFile,
     animations: AnimationsFile,
+    zoom: ZoomFile,
+    watermark: WatermarkFile,
     capture: CaptureFile,
     mouse: MouseFile,
     input: InputConfig,
@@ -766,6 +788,79 @@ struct KeyboardFile {
     options: Option<String>,
     repeat_delay: Option<i64>,
     repeat_rate: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ZoomFile {
+    border_width: Option<i64>,
+    border_color: Option<String>,
+    animation_ms: Option<i64>,
+    sharpen: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct WatermarkFile {
+    enabled: Option<bool>,
+    size: Option<i64>,
+    alpha: Option<f64>,
+    color: Option<String>,
+}
+
+/// `[watermark]`: the shown desktop's number in the top-left corner (`crate::watermark`).
+fn watermark_style(file: &WatermarkFile) -> crate::watermark::WatermarkStyle {
+    let default = crate::watermark::WatermarkStyle::default();
+    let fallback = default.color.map(|c| c as f32 / 255.0);
+    crate::watermark::WatermarkStyle {
+        enabled: file.enabled.unwrap_or(default.enabled),
+        size: number("watermark.size", file.size, default.size, 16..=256),
+        alpha: match file.alpha {
+            Some(v) if (0.0..=1.0).contains(&v) => v as f32,
+            Some(v) => {
+                tracing::warn!("ignoring `watermark.alpha = {v}`: not from 0.0 to 1.0");
+                default.alpha
+            }
+            None => default.alpha,
+        },
+        color: color("watermark.color", file.color.as_deref(), [fallback[0], fallback[1], fallback[2], 1.0])
+            .map_or(default.color, |[r, g, b, _]| [r, g, b].map(|c| (c * 255.0).round() as u8)),
+    }
+}
+
+/// `[zoom]`: the border around the zoom's lens (`crate::zoom`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ZoomStyle {
+    /// Pixels of the border, just outside the lens; 0: none.
+    pub border_width: i32,
+    /// Its color (premultiplied RGBA); `None`: not drawn.
+    pub border_color: Option<[f32; 4]>,
+    /// How long the lens grows in and shrinks back.
+    pub animation: std::time::Duration,
+    /// How much the lens sharpens what it stretches; 0: not.
+    pub sharpen: f64,
+}
+
+/// How much the zoom's lens sharpens by default.
+const SHARPEN: f64 = 0.5;
+
+/// `[zoom]`, its color by default the focused tile's (#5c9ef2 when that is `none`).
+fn zoom_style(file: &ZoomFile, focus: Option<[f32; 4]>) -> ZoomStyle {
+    ZoomStyle {
+        border_width: number("zoom.border_width", file.border_width, 2, 0..=16),
+        border_color: color("zoom.border_color", file.border_color.as_deref(), focus.unwrap_or(FOCUS)),
+        animation: std::time::Duration::from_millis(
+            number("zoom.animation_ms", file.animation_ms, crate::zoom::ANIMATION.as_millis() as i32, 0..=1000) as u64,
+        ),
+        sharpen: match file.sharpen {
+            Some(v) if (0.0..=2.0).contains(&v) => v,
+            Some(v) => {
+                tracing::warn!("ignoring `zoom.sharpen = {v}`: not from 0.0 to 2.0");
+                SHARPEN
+            }
+            None => SHARPEN,
+        },
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -923,6 +1018,7 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         lock_command: file.lock_command.clone().filter(|c| !c.is_empty()).unwrap_or_else(|| "swaylock -f".into()),
         follow: file.follow,
         focus_follows_mouse: file.focus_follows_mouse,
+        fill_on_close: file.fill_on_close,
         dock_click: dock_click(file.mouse.dock_click.as_deref(), &modifier),
         outputs: outputs(&file.output),
         input: input(&file.input),
@@ -930,6 +1026,8 @@ fn resolve(file: &File, env: &dyn Fn(&str) -> Option<String>) -> Config {
         tab_widths: tab_widths(&file.tabs),
         tab_style: tab_style(&file.tabs),
         animations: animations(&file.animations),
+        watermark: watermark_style(&file.watermark),
+        zoom: zoom_style(&file.zoom, color("focus_color", file.focus_color.as_deref(), FOCUS)),
         border_color: color("border_color", file.border_color.as_deref(), WHITE),
         focus_color: color("focus_color", file.focus_color.as_deref(), FOCUS),
         background_color: color("background_color", file.background_color.as_deref(), BACKGROUND)
@@ -1339,6 +1437,8 @@ mod tests {
         assert!(config("follow = true\n").follow);
         assert!(!config("").focus_follows_mouse);
         assert!(config("focus_follows_mouse = true\n").focus_follows_mouse);
+        assert!(!config("").fill_on_close);
+        assert!(config("fill_on_close = true\n").fill_on_close);
     }
 
     #[test]
@@ -1371,6 +1471,27 @@ mod tests {
     }
 
     #[test]
+    fn zoom_border() {
+        let z = config("").zoom;
+        assert_eq!((z.border_width, z.border_color), (2, Some(FOCUS)));
+        let z = config("focus_color = \"#ff0000\"\n").zoom;
+        assert_eq!(z.border_color, Some([1.0, 0.0, 0.0, 1.0]));
+        let z = config("focus_color = \"none\"\n[zoom]\nborder_width = 4\n").zoom;
+        assert_eq!((z.border_width, z.border_color), (4, Some(FOCUS)));
+        let z = config("[zoom]\nborder_width = 0\nborder_color = \"none\"\n").zoom;
+        assert_eq!((z.border_width, z.border_color), (0, None));
+        let z = config("[zoom]\nborder_width = 99\nborder_color = \"#00ff00\"\n").zoom;
+        assert_eq!((z.border_width, z.border_color), (2, Some([0.0, 1.0, 0.0, 1.0])));
+        assert_eq!(config("").zoom.animation, crate::zoom::ANIMATION);
+        assert_eq!(config("[zoom]\nanimation_ms = 500\n").zoom.animation.as_millis(), 500);
+        assert_eq!(config("[zoom]\nanimation_ms = 5000\n").zoom.animation, crate::zoom::ANIMATION);
+        assert_eq!(config("").zoom.sharpen, 0.5);
+        assert_eq!(config("[zoom]\nsharpen = 1.2\n").zoom.sharpen, 1.2);
+        assert_eq!(config("[zoom]\nsharpen = 0.0\n").zoom.sharpen, 0.0);
+        assert_eq!(config("[zoom]\nsharpen = 3.0\n").zoom.sharpen, 0.5);
+    }
+
+    #[test]
     fn animations() {
         use std::time::Duration;
         assert_eq!(config("").animations, Animations::default());
@@ -1393,6 +1514,16 @@ mod tests {
         assert_eq!((s.height, s.font_size, s.background, s.active), (30, 16, [0, 0, 0], [255, 0, 0]));
         assert_eq!(s.text, TabStyle::default().text);
         assert_eq!(config("[tabs]\nheight = 99\n").tab_style.height, TabStyle::default().height);
+    }
+
+    #[test]
+    fn watermark_style() {
+        use crate::watermark::WatermarkStyle;
+        assert_eq!(config("").watermark, WatermarkStyle::default());
+        let w = config("[watermark]\nenabled = false\nsize = 32\nalpha = 0.5\ncolor = \"#ff0000\"\n").watermark;
+        assert_eq!((w.enabled, w.size, w.alpha, w.color), (false, 32, 0.5, [255, 0, 0]));
+        let w = config("[watermark]\nsize = 9\nalpha = 3.0\n").watermark;
+        assert_eq!((w.size, w.alpha), (WatermarkStyle::default().size, WatermarkStyle::default().alpha));
     }
 
     #[test]

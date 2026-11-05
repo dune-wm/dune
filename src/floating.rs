@@ -133,7 +133,8 @@ impl Dune {
     }
 
     /// The `sticky` tile option: `id` floats in front of every other tile, on every desktop
-    /// of its monitor, where it is (out of the strip: small, in the bottom right corner);
+    /// of its monitor, where it is (out of the strip: where the last sticky window of its
+    /// app was, on that monitor, else small, in the bottom right corner of this one);
     /// again: an ordinary float.
     pub fn toggle_sticky(&mut self, id: TileId) {
         if self.sticky.remove(&id) {
@@ -147,7 +148,9 @@ impl Dune {
                 return;
             };
             let home = self.layouts.get(&output).and_then(|l| l.home(id));
-            self.float_tile(id, &output, sticky_start(area));
+            let (on, rect) =
+                self.remembered_sticky_place(id, &output).unwrap_or_else(|| (output.clone(), sticky_start(area)));
+            self.float_tile(id, &on, rect);
             if let Some(home) = home {
                 self.float_homes.insert(id, (output, home));
             }
@@ -184,6 +187,7 @@ impl Dune {
         let Some(area) = area else { return };
         self.set_float_rect(id, scaled(r, area, dw, dh));
         self.arrange();
+        self.remember_sticky_place(id);
     }
 
     /// Floats go to the output their middle is on (they may have been dragged to another

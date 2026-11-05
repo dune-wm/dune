@@ -8,6 +8,7 @@
 # DUNE_CAMERA_SIZE (default 1280x720) and DUNE_CAMERA_MIRROR=0 change what it shows.
 # The picture fills the window whatever its shape, cropping what does not fit (resize the
 # float to a square or a strip to frame just your face); DUNE_CAMERA_CROP=0 letterboxes instead.
+# dune puts it back where it was and at the size it had (so the same crop) when it opens again.
 #
 # While dune-eye-tracker runs (it keeps the webcam) and does not share it yet, this turns
 # its sharing on by itself (`dune-eye-tracker share`) and off again when the window closes,

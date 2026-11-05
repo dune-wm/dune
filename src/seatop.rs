@@ -132,6 +132,7 @@ impl Dune {
         match (self.seatop, button, state) {
             (Seatop::Resize(drag), BTN_RIGHT, ButtonState::Released) => {
                 self.seatop = Seatop::Default;
+                self.remember_sticky_place(drag.tile);
                 if drag.dock && still(drag.start, pos) {
                     self.send_to_dock(drag.tile);
                 }
@@ -156,6 +157,8 @@ impl Dune {
                     // A float let go on a tab bar becomes a tab there.
                     self.join_tab(drag.tile, target);
                 }
+                // A sticky float: its place, for the next window of its app.
+                self.remember_sticky_place(drag.tile);
                 true
             }
             // While dragging, the other buttons are the drag's too.

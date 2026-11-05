@@ -117,11 +117,15 @@ The `zoom` key (`Mod+z`) magnifies the tile under the pointer 3x (the whole moni
 it is over none) in a lens: the tile less a 50 px frame on each side (less on a small
 tile), where the real tile shows, a dead zone where the eyes can rest. What the pointer is
 on is in the middle of the lens, even by an edge: the edges come in from the borders an eye
-tracker hardly reaches, and past them the real tile shows through. No border: what of the
+tracker hardly reaches, and past them the real tile shows through. A border rings the lens (`[zoom]`:
+`border_width`, default 2 px, 0 none; `border_color`, default `focus_color`), and what of the
 tile the lens does not magnify (the frame, the real tile past its edges) is shaded, the
-pointer bright over it. The lens grows in from the real size in 150 ms and shrinks back
-on the way out. The rest of the monitor stays as it is. Only what is drawn changes: the pointer moves and clicks in real coordinates. The key again goes back
-out, and so does any click (and `zoom_out`, `Mod+Shift+z`). The right Ctrl and Shift
+pointer bright over it. The lens grows in from the real size in 300 ms (`[zoom] animation_ms`) and shrinks back
+on the way out. The lens stretches what the window already drew: the text is softer than
+the real tile, but the window never redraws while zooming, so nothing jumps. The lens sharpens what it
+stretches (`[zoom] sharpen`, an unsharp mask on the GPU), more as it grows. The rest of the monitor stays as it is. Only what is drawn changes: the pointer moves and clicks in real coordinates. The key again clicks where
+the pointer is (a plain click, though Mod is down: it never floats the tile) and so goes back
+out, as any click does (a Mod+click while zoomed is plain too) (and `zoom_out`, `Mod+Shift+z`, or Mod tapped alone: let go before it counts as held, nothing else pressed; neither clicks). The right Ctrl and Shift
 tapped together alone (both down, let go of both, nothing else pressed) click where the
 pointer is, zoomed or not: the hand on the keyboard, when the mouse is on the left. The left
 ones stay the apps' Ctrl+Shift, and the app gets the keys either way.

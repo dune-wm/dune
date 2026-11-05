@@ -66,6 +66,9 @@ impl Dune {
         if (&self.config.font_family, self.config.tab_widths, self.config.tab_style) != (&old.font_family, old.tab_widths, old.tab_style) {
             self.tab_titles = crate::tab_title::TabTitles::new(&self.config.font_family, self.config.tab_widths, self.config.tab_style);
         }
+        if (&self.config.font_family, self.config.watermark) != (&old.font_family, old.watermark) {
+            self.watermark = crate::watermark::Watermark::new(&self.config.font_family, self.config.watermark);
+        }
         if self.config.input != old.input {
             self.configure_input_devices();
         }

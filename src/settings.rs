@@ -21,13 +21,14 @@ enum Kind {
 
 /// The settings `get` and `set` know (`table.key` for those in a table), with what they
 /// take and their default.
-const LOOK: [(&str, Kind, &str); 17] = [
+const LOOK: [(&str, Kind, &str); 18] = [
     ("border_color", Kind::Color { none: true }, "#ffffff"),
     ("focus_color", Kind::Color { none: true }, "#5c9ef2"),
     ("background_color", Kind::Color { none: false }, "#14141a"),
     ("border_width", Kind::Number(0, 16), "1"),
     ("gap", Kind::Number(0, 64), "6"),
     ("corner_radius", Kind::Number(0, 64), "0"),
+    ("fill_on_close", Kind::Bool, "false"),
     ("tabs.height", Kind::Number(16, 64), "24"),
     ("tabs.font_size", Kind::Number(8, 32), "14"),
     ("tabs.background", Kind::Color { none: false }, "#1e2029"),

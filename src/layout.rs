@@ -792,6 +792,23 @@ impl Layout {
         true
     }
 
+    /// Remove a tile like `remove`; when its column goes with it, the columns left grow
+    /// in proportion into the width it had, as far as the monitor reaches.
+    pub fn remove_filling(&mut self, id: TileId) -> bool {
+        let freed = self.find(id).map(|(c, _, _)| &self.columns[c]).filter(|col| col.all_tiles().len() == 1).map_or(0.0, |col| col.width);
+        if !self.remove(id) {
+            return false;
+        }
+        let used: f64 = self.columns.iter().map(|col| col.width).sum();
+        let target = (used + freed).min(MAX_WIDTH);
+        if used > 0.0 && used < target {
+            for col in &mut self.columns {
+                col.width = col.width / used * target;
+            }
+        }
+        true
+    }
+
     /// Exchange the positions of two tiles.
     pub fn swap(&mut self, x: TileId, y: TileId) {
         let rows = self.columns.iter_mut().flat_map(|c| c.rows.iter_mut().chain(c.panes.iter_mut().flatten().flat_map(|p| p.rows.iter_mut())));
@@ -1369,6 +1386,52 @@ mod tests {
         assert!(l.remove(1));
         assert!(l.remove(3));
         assert!(l.tiles().is_empty());
+    }
+
+    #[test]
+    fn the_columns_left_fill_what_a_closed_column_frees() {
+        let mut l = Layout::default();
+        l.insert(1, None, Split::Vertical);
+        l.insert(2, Some(1), Split::Vertical);
+        assert!(l.remove_filling(2));
+        assert_eq!(geo(&mut l, 1), vec![(1, Rect::new(0, 0, 1000, 600))]);
+
+        // The next column halves it again, as a lone full-width tile.
+        l.insert(2, Some(1), Split::Vertical);
+        assert_eq!(geo(&mut l, 1)[0], (1, Rect::new(0, 0, 500, 600)));
+
+        // Several share it by the widths they had: 0.3 and 0.2 become 0.6 and 0.4.
+        l.resize_width(1, -0.2);
+        l.resize_width(2, -0.3);
+        l.insert(3, Some(2), Split::Vertical);
+        assert!(l.remove_filling(3));
+        assert_eq!(geo(&mut l, 1), vec![(1, Rect::new(0, 0, 600, 600)), (2, Rect::new(600, 0, 400, 600))]);
+        assert!(!l.remove_filling(42));
+    }
+
+    #[test]
+    fn filling_gives_only_what_was_freed_and_what_fits() {
+        // The strip stays past the monitor: nothing grows.
+        let mut l = Layout::default();
+        l.insert(1, None, Split::Vertical);
+        l.insert(2, Some(1), Split::Vertical);
+        l.insert(3, Some(2), Split::Vertical);
+        assert!(l.remove_filling(3));
+        assert_eq!(geo(&mut l, 1), vec![(1, Rect::new(0, 0, 500, 600)), (2, Rect::new(500, 0, 500, 600))]);
+
+        // Space that was already empty stays empty.
+        l.resize_width(1, -0.2);
+        l.resize_width(2, -0.3);
+        assert!(l.remove_filling(2));
+        assert_eq!(geo(&mut l, 1), vec![(1, Rect::new(0, 0, 500, 600))]);
+
+        // A tile that leaves others in its column frees no width.
+        let mut l = Layout::default();
+        l.insert(1, None, Split::Vertical);
+        l.insert(2, Some(1), Split::Vertical);
+        l.insert(3, Some(2), Split::Horizontal);
+        assert!(l.remove_filling(3));
+        assert_eq!(geo(&mut l, 1), vec![(1, Rect::new(0, 0, 500, 600)), (2, Rect::new(500, 0, 500, 600))]);
     }
 
     #[test]

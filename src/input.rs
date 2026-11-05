@@ -810,12 +810,17 @@ impl Dune {
             return pointer.frame(self);
         }
 
+        // Zoomed, a button is a plain click: Mod held for the zoom key does not make it a
+        // Mod drag (no float) or the dock click.
+        let mouse = gestures;
+        let gestures = gestures && !(button_state == ButtonState::Pressed && self.zoom.is_some());
+
         // `dune events pointer` (dune-eye-tracker learns from where you click): not while locked.
         if button_state == ButtonState::Pressed {
             // What pressed it: a real button, else the Ctrl+Shift tap (it says so), else a
             // command (`dune pointer click`).
             let by = match std::mem::take(&mut self.click_by) {
-                _ if gestures => "mouse",
+                _ if mouse => "mouse",
                 "" => "command",
                 by => by,
             };

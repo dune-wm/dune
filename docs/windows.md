@@ -47,6 +47,9 @@ the right of the focused one and the view slides to show whatever takes focus, w
   resize it by hand, `Mod+f` toggles full width. When a change gives windows new sizes,
   the layout stays as it was until they have drawn them (at most 200 ms), then every tile
   moves at once, so a slow app never leaves its neighbours overlapping or a gap.
+- **Fill on close** With `fill_on_close = true` the columns left grow into the width of a
+  column that closes, each by its share, as far as the monitor reaches. Space that was
+  already empty stays empty, and a tile moved elsewhere frees nothing.
 - **Center** `Mod+Space` keeps the focused column in the middle of the monitor, even when
   that leaves empty space at an end, until focus goes to another column.
 
@@ -158,7 +161,10 @@ A **sticky** float (`On top, every desktop` in the tile options, the `sticky` ke
 action, none bound by default) stays in front of every other tile, a fullscreen one too,
 and on its monitor whichever desktop it shows, at the same place: a camera, a video, a
 call. A tiled tile turned sticky floats small in the bottom right corner (16:9); move and
-resize it as any float. The same again makes it an ordinary float.
+resize it as any float. The same again makes it an ordinary float. dune remembers where a
+sticky float of each app was (its place on the monitor and its size, kept in
+`~/.local/state/dune/sticky.toml`, across restarts): the next window of that app that turns
+sticky comes back there.
 
 `dune-camera` (installed by `make install`; mpv on the first video device, mirrored, run
 again to close) is meant for it. While dune-eye-tracker runs it keeps the webcam and shares
@@ -168,7 +174,8 @@ the tracker on and not sharing yet, `Mod+c` turns its sharing on by itself and o
 the window closes; sharing for a call (`dune-eye-tracker share`) stays by hand, and a call
 still reading the virtual camera keeps it on. Its picture fills the float whatever its shape, cropping
 what does not fit: resize it to a square or a strip to frame just a face
-(`DUNE_CAMERA_CROP=0` letterboxes instead).
+(`DUNE_CAMERA_CROP=0` letterboxes instead). Closed with `Mod+c` and opened again, it comes
+back on the same monitor, where it was and at the same size, so with the same crop.
 
 ```toml
 [spawn]

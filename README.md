@@ -50,10 +50,10 @@ no sound, image or window of yours goes to the network.
 
 | Project | What |
 |---|---|
-| [dune-shell](https://github.com/dune-wm/dune-shell) | the widgets in the monitors' corners, the dock and the minimap (Quickshell) |
+| [dune-shell](https://github.com/dune-wm/dune-shell) | the widgets in the monitors' corners, the dock, the minimap and the spoken hints (Quickshell) |
 | [dune-voice](https://github.com/dune-wm/dune-voice) | drive dune by voice, all on this computer |
 | [dune-eye-tracker](https://github.com/dune-wm/dune-eye-tracker) | the pointer moved by where you look, with a webcam |
-| [dune-a11y](https://github.com/dune-wm/dune-a11y) | the apps' buttons and links by name, for the voice and the eye tracker |
+| [dune-a11y](https://github.com/dune-wm/dune-a11y) | the apps' buttons and links by name or by a spoken word on them, for the voice and the eye tracker |
 
 ## Running
 
@@ -77,11 +77,14 @@ dune-session    # what the login screen runs: a login shell first, log in
 | `Mod+v` / `Mod+s` | a terminal right of / below the tile |
 | `Mod+r` | cycle the column width |
 | `Mod+Shift+f` | fullscreen |
+| `Mod+z` | zoom the tile under the pointer, for the last pixels |
 | `Mod+Shift+d` / `Mod+Shift+e` | the tile into the dock / show the dock (dune-shell) |
 | `Mod+1` .. `Mod+9` | show a desktop |
 | `Mod+q` | close the tile |
 
 Every key is listed, and can be rebound, in [Configuration](docs/configuration.md#default-keys).
+The same page has the zoom's lens (`[zoom]`), the desktop's number in each monitor's corner
+(`[watermark]`) and `fill_on_close`, the columns left taking the room of one that closes.
 
 ## Documentation
 

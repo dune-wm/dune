@@ -1,6 +1,8 @@
 //! Rounded tile corners (`corner_radius`): a texture shader that cuts what a window or a
 //! tab bar draws to its tile's rounded box, and a pixel shader for the rounded blocks and
-//! borders around it. Both run on the GLES renderer every backend uses.
+//! borders around it. Both run on the GLES renderer every backend uses. The texture shader
+//! also sharpens, for the zoom's lens (`Sharpened`, `Rounded::sharpened`): the lens stretches
+//! what windows drew, and an unsharp mask gives the stretched edges back some contrast.
 
 use smithay::{
     backend::renderer::{
@@ -16,7 +18,8 @@ use smithay::{
 
 use crate::layout::Rect;
 
-/// The default texture shader of smithay, its colour then masked to the rounded box.
+/// The default texture shader of smithay, sharpened by `sharpen` (an unsharp mask over the
+/// four texels around, `texel` apart: 0, as it is), its colour then masked to the rounded box.
 const CLIP_SHADER: &str = r#"#version 100
 
 //_DEFINES_
@@ -45,9 +48,20 @@ uniform vec3 box_y;
 uniform vec2 box_size;
 // Top left, top right, bottom right, bottom left.
 uniform vec4 radius;
+// One texel of the texture, in texture coordinates, and how much to sharpen.
+uniform vec2 texel;
+uniform float sharpen;
 
 void main() {
     vec4 color = texture2D(tex, v_coords);
+    if (sharpen > 0.0) {
+        vec4 around = texture2D(tex, v_coords + vec2(texel.x, 0.0)) + texture2D(tex, v_coords - vec2(texel.x, 0.0))
+            + texture2D(tex, v_coords + vec2(0.0, texel.y)) + texture2D(tex, v_coords - vec2(0.0, texel.y));
+        color = clamp(color + sharpen * (color * 4.0 - around), 0.0, 1.0);
+#if !defined(NO_ALPHA)
+        color.rgb = min(color.rgb, vec3(color.a));
+#endif
+    }
 
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0) * alpha;
@@ -137,6 +151,8 @@ impl Shaders {
                     UniformName::new("box_y", UniformType::_3f),
                     f2("box_size"),
                     UniformName::new("radius", UniformType::_4f),
+                    f2("texel"),
+                    UniformName::new("sharpen", UniformType::_1f),
                 ],
             )
             .inspect_err(|e| tracing::warn!("rounded corners off for windows: {e}"))
@@ -225,6 +241,8 @@ pub struct Rounded<E> {
     /// The box, output-local.
     outer: Rectangle<i32, Physical>,
     radii: [f32; 4],
+    /// How much it is sharpened (`CLIP_SHADER`); 0: not.
+    sharpen: f32,
 }
 
 impl<E: Element> Rounded<E> {
@@ -235,7 +253,14 @@ impl<E: Element> Rounded<E> {
             texture,
             outer: Rectangle::new((outer.x, outer.y).into(), (outer.w, outer.h).into()),
             radii: fit(radii, (outer.w, outer.h)),
+            sharpen: 0.0,
         }
+    }
+
+    /// The same, sharpened by `amount` (in the zoom's lens).
+    pub fn sharpened(mut self, amount: f32) -> Self {
+        self.sharpen = amount;
+        self
     }
 
     /// The box's corners, each its radius square, in the coordinates of the element's `geometry`.
@@ -339,6 +364,8 @@ impl<E: RenderElement<GlesRenderer>> RenderElement<GlesRenderer> for Rounded<E> 
                 Uniform::new("box_y", box_y),
                 Uniform::new("box_size", (self.outer.size.w as f32, self.outer.size.h as f32)),
                 Uniform::new("radius", (self.radii[0], self.radii[1], self.radii[2], self.radii[3])),
+                Uniform::new("texel", texel(self.texture)),
+                Uniform::new("sharpen", self.sharpen),
             ],
         );
         let result = self.inner.draw(frame, src, dst, damage, opaque_regions, cache);
@@ -347,6 +374,102 @@ impl<E: RenderElement<GlesRenderer>> RenderElement<GlesRenderer> for Rounded<E> 
     }
 
     /// Never scanned out directly: the plane would show the square corners.
+    fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        None
+    }
+}
+
+/// One texel of a texture `size` big, in texture coordinates.
+fn texel(size: Size<i32, Buffer>) -> (f32, f32) {
+    (1.0 / size.w.max(1) as f32, 1.0 / size.h.max(1) as f32)
+}
+
+/// An element sharpened by `CLIP_SHADER` with no corners cut (the zoom's lens): its whole
+/// box maps to one point well inside a box of 2 by 2. Elements that draw no texture (solid
+/// blocks) are drawn as they are; `Rounded` ones set their own program, sharpened by
+/// `Rounded::sharpened`. Without the program (it failed to compile), not sharpened.
+#[derive(Debug)]
+pub struct Sharpened<E> {
+    inner: E,
+    program: Option<GlesTexProgram>,
+    sharpen: f32,
+}
+
+impl<E> Sharpened<E> {
+    pub fn new(inner: E, program: Option<&GlesTexProgram>, sharpen: f32) -> Self {
+        Sharpened { inner, program: program.filter(|_| sharpen > 0.0).cloned(), sharpen }
+    }
+}
+
+impl<E: Element> Element for Sharpened<E> {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        self.inner.src()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+
+    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        self.inner.opaque_regions(scale)
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl<E: RenderElement<GlesRenderer>> RenderElement<GlesRenderer> for Sharpened<E> {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
+    ) -> Result<(), GlesError> {
+        let Some(program) = &self.program else { return self.inner.draw(frame, src, dst, damage, opaque_regions, cache) };
+        // The texture's size as far as is known: what the element shows of it (all of it,
+        // but for a window cut to its tile, where a texel is then a little off).
+        let size = self.inner.src().size;
+        let texture = Size::<i32, Buffer>::from((size.w.round() as i32, size.h.round() as i32));
+        frame.override_default_tex_program(
+            program.clone(),
+            vec![
+                Uniform::new("box_x", [0.0f32, 0.0, 1.0]),
+                Uniform::new("box_y", [0.0f32, 0.0, 1.0]),
+                Uniform::new("box_size", (2.0f32, 2.0f32)),
+                Uniform::new("radius", (0.0f32, 0.0, 0.0, 0.0)),
+                Uniform::new("texel", texel(texture)),
+                Uniform::new("sharpen", self.sharpen),
+            ],
+        );
+        let result = self.inner.draw(frame, src, dst, damage, opaque_regions, cache);
+        frame.clear_tex_program_override();
+        result
+    }
+
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
         None
     }

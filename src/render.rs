@@ -29,7 +29,7 @@ use smithay::{
 use crate::{
     Dune,
     layout::{Rect, Side, TileId},
-    rounded::{Radii, Rounded, RoundedRect, Shaders},
+    rounded::{Radii, Rounded, RoundedRect, Shaders, Sharpened},
 };
 
 /// Where a dragged tile will land (premultiplied, translucent).
@@ -98,7 +98,7 @@ render_elements! {
     /// it the scene magnified, the pointer in the middle of the zoomed tile and cut to it.
     pub ScaledElements<=GlesRenderer>;
     Plain=RescaleRenderElement<OutputRenderElements>,
-    Zoomed=CropRenderElement<RescaleRenderElement<OutputRenderElements>>,
+    Zoomed=CropRenderElement<RescaleRenderElement<Sharpened<OutputRenderElements>>>,
 }
 
 /// Buffers behind the decorations, kept between frames so unchanged ones cause no damage.
@@ -123,6 +123,8 @@ pub struct Decorations {
     recording: [SolidColorBuffer; 4],
     /// Top, bottom, left, right of the shade around the zoom's lens (`crate::zoom`).
     lens: [SolidColorBuffer; 4],
+    /// Top, bottom, left, right edges of the border around the lens (`[zoom]`).
+    lens_border: [SolidColorBuffer; 4],
     /// With `corner_radius`, in place of the solid ones above: borders, backdrops (and
     /// glass), private covers, and the drop spot and dragged tile.
     rings: HashMap<TileId, RoundedRect>,
@@ -162,7 +164,7 @@ impl Dune {
     /// The rectangle of `tile` when it is shown on `output`.
     pub(crate) fn shown_rect(&self, tile: TileId, output: &Output) -> Option<Rect> {
         self.on_output(tile, output).then_some(())?;
-        self.shown.iter().any(|(t, _)| *t == tile).then_some(())?;
+        self.on_screen(tile).then_some(())?;
         self.geometries.iter().find(|(t, _)| *t == tile).map(|(_, r)| self.drawn_rect(tile, *r))
     }
 
@@ -432,7 +434,27 @@ impl Dune {
                             scale,
                         )));
                     }
+                    // The border, just outside the lens as drawn (it grows and shrinks with it).
+                    let style = self.config.zoom;
+                    if let Some(color) = style.border_color.filter(|_| style.border_width > 0) {
+                        for (buffer, (x, y, w, h)) in self.decorations.lens_border.iter_mut().zip(border_edges(a, style.border_width)) {
+                            if w <= 0 || h <= 0 {
+                                continue;
+                            }
+                            buffer.update((w, h), color);
+                            let edge = SolidColorRenderElement::from_buffer(buffer, (x, y), 1.0, along as f32, Kind::Unspecified);
+                            shade.push(ScaledElements::Plain(RescaleRenderElement::from_element(
+                                OutputRenderElements::Solid(edge),
+                                (0, 0).into(),
+                                scale,
+                            )));
+                        }
+                    }
+                    // Sharpened (`[zoom] sharpen`), as much more as the lens has grown.
+                    let amount = (self.config.zoom.sharpen * along) as f32;
+                    let program = if amount > 0.0 { Shaders::get(renderer).clip } else { None };
                     for e in self.scene_elements(renderer, output, with_pointer) {
+                        let e = Sharpened::new(sharpened(e, amount), program.as_ref(), amount);
                         let magnified = RescaleRenderElement::from_element(e, origin, scale * z);
                         if let Some(cut) = CropRenderElement::from_element(magnified, Scale::from(1.0), crop) {
                             elements.push(ScaledElements::Zoomed(cut));
@@ -509,6 +531,7 @@ impl Dune {
         // The tooltips and menus of a bar under the windows still show over them.
         elements.extend(self.layer_popup_elements(renderer, output, &[Layer::Bottom, Layer::Background]));
         elements.extend(self.edge_mark_elements(renderer, output));
+        elements.extend(self.watermark_element(renderer, output));
         // Private tiles: a block in place of their window (popups and subsurfaces too).
         let private: Vec<TileId> = self.tiles.keys().copied().filter(|t| self.privacy.tile(*t)).collect();
         let public = |t: TileId| !private.contains(&t);
@@ -617,6 +640,25 @@ impl Dune {
             }
         }
         elements
+    }
+
+    /// The number of the desktop `output` shows (`🔒 3` when locked), faint in the top-left
+    /// corner of the area tiles get, under the bars.
+    fn watermark_element(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<OutputRenderElements> {
+        let style = self.watermark.style;
+        if !style.enabled || style.alpha <= 0.0 {
+            return None;
+        }
+        let (geo, area) = (self.space.output_geometry(output)?, self.output_rect(output)?);
+        let name = output.name();
+        let desk = self.desk_of(&name);
+        let label = crate::privacy::workspace_name(desk, self.privacy.locked(&name, desk));
+        let (buffer, _) = self.watermark.label(&label)?;
+        let inset = crate::watermark::INSET;
+        let at = Point::<f64, Physical>::from(((area.x - geo.loc.x + inset) as f64, (area.y - geo.loc.y + inset) as f64));
+        MemoryRenderBufferRenderElement::from_buffer(renderer, at, buffer, Some(style.alpha), None, None, Kind::Unspecified)
+            .ok()
+            .map(OutputRenderElements::Image)
     }
 
     /// Whether `tile` belongs to the layout or the floats of `output`.
@@ -857,5 +899,16 @@ mod tests {
         assert_eq!(moved_bar(bar, target, target), bar);
         // The column sliding narrower: the bar follows the tile, by as much.
         assert_eq!(moved_bar(bar, target, Rect::new(10, 30, 480, 570)), Rect::new(10, 0, 980, 30));
+    }
+}
+
+/// `e`, its rounded parts sharpened by `amount` (they set their own program; `Sharpened`
+/// does the rest).
+fn sharpened(e: OutputRenderElements, amount: f32) -> OutputRenderElements {
+    match e {
+        OutputRenderElements::RoundedSurface(r) => OutputRenderElements::RoundedSurface(r.sharpened(amount)),
+        OutputRenderElements::RoundedImage(r) => OutputRenderElements::RoundedImage(r.sharpened(amount)),
+        OutputRenderElements::RoundedClosing(r) => OutputRenderElements::RoundedClosing(r.sharpened(amount)),
+        e => e,
     }
 }
